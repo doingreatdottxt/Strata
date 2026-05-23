@@ -5,14 +5,14 @@
 -- ____________________________
 -- Key 1 - Shift
 -- Key 2 - Rec Start/Stop
--- Key 3 - Quantization
+-- Key 3 - Toggle Sync Mode (Free / Beat)
 -- Shift + key 3 - Excavate Surface
 -- Encoder 1 - Global Volume
 -- Encoder 2 - [Unassigned]
 -- Encoder 3 - [Unassigned]
 
 engine.name = 'MemoryPhysics'
-local MAX_TIME = 30.0 -- Expanded threshold for 16-beat loops at low BPMs
+local MAX_TIME = 30.0 
 
 local state = {
   recording = false,
@@ -28,7 +28,7 @@ local state = {
 }
 
 local layer_phases = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
-local redraw_metro
+local redraw_metro = nil
 
 function init()
   setup_params()
@@ -92,7 +92,6 @@ function setup_params()
   params:add_control("threshold", "AUTO THRESHOLD", controlspec.new(0.001, 1.0, 'exp', 0.001, 0.05))
   params:add_control("release_time", "AUTO TIMEOUT RELEASE (S)", controlspec.new(0.1, 5.0, 'lin', 0.1, 2.0))
   
-  -- Consolidated to Free / Beat
   params:add_option("sync_mode", "SYNC MODE", {"FREE", "BEAT"}, 2)
   
   params:add_trigger("excavate", "EXCAVATE ENTIRE SITE")
@@ -107,12 +106,10 @@ function setup_params()
 end
 
 function calculate_quantized_duration(raw_dur)
-  -- FREE mode: Zero mathematical trimming, truly free looping
   if params:get("sync_mode") == 1 then
     return math.max(0.1, math.min(raw_dur, MAX_TIME))
   end
   
-  -- BEAT mode: Trim to the nearest discrete beat boundary (1 to 16 steps)
   local bpm = clock.get_tempo()
   local beat_sec = 60.0 / bpm
   
@@ -129,7 +126,6 @@ function calculate_smart_shift()
   local bpm = clock.get_tempo()
   local beat_sec = 60.0 / bpm
   
-  -- Snap phase exactly to the closest Norns rhythmic peak
   local nearest_grid = math.floor(state.start_beat + 0.5)
   local beat_diff = nearest_grid - state.start_beat 
   
@@ -173,7 +169,6 @@ function key(n, z)
         state.surface_cycles = 0
       end
     else
-      -- Toggle Sync Mode Free/Beat
       params:set("sync_mode", params:get("sync_mode") == 1 and 2 or 1)
     end
   end
@@ -182,15 +177,15 @@ end
 function enc(n, d)
   if n == 1 then
     params:delta("main_vol", d)
-  elseif n == 2 then
-    -- Ready for new effects mapping
-  elseif n == 3 then
-    -- Ready for new effects mapping
   end
 end
 
 function cleanup()
-  if redraw_metro then redraw_metro:stop() end
+  -- FIX: Safe threading validation check before throwing exit interrupts
+  if redraw_metro ~= nil then 
+    redraw_metro:stop()
+    redraw_metro = nil
+  end
 end
 
 function redraw()
@@ -229,25 +224,25 @@ function redraw()
     end
   end
   
-  -- Footer UI Elements
+  -- Footer UI Clean Context Segmentation
   if params:get("sync_mode") == 1 then
     screen.level(3)
     screen.move(128, 64)
     screen.text_right("FREE")
   else
-    -- 16-Step Beat Visualizer
+    -- FIX: Adjusted dimensions to clear border clipping errors
     local current_beat = math.floor(clock.get_beats()) % 16
     
     for i = 0, 15 do
-      local x = (i * 6) + 4
-      local y = 58
+      local x = (i * 5) + 2 
+      local y = 59
       if i <= current_beat then
         screen.level(15)
-        screen.rect(x, y, 4, 4)
+        screen.rect(x, y, 3, 3)
         screen.fill()
       else
         screen.level(2)
-        screen.rect(x, y, 4, 4)
+        screen.rect(x, y, 3, 3)
         screen.stroke()
       end
     end
