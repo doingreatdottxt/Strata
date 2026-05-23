@@ -14,7 +14,7 @@ Engine_MemoryPhysics : CroneEngine {
     alloc {
         luaAddr = NetAddr("127.0.0.1", 10111);
         
-        // Expanded to 30 seconds to safely accommodate 16 beats at slow tempos
+        // Configured for 30 seconds to support 16-step phrases at low tempos
         buffers = Array.fill(maxLayers, { Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2); });
         recBuffer = Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
         
