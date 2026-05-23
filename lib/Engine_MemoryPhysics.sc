@@ -13,8 +13,10 @@ Engine_MemoryPhysics : CroneEngine {
 
     alloc {
         luaAddr = NetAddr("127.0.0.1", 10111);
-        buffers = Array.fill(maxLayers, { Buffer.alloc(context.server, context.server.sampleRate * 10.0, 2); });
-        recBuffer = Buffer.alloc(context.server, context.server.sampleRate * 10.0, 2);
+        
+        // Expanded to 30 seconds to safely accommodate 16 beats at slow tempos
+        buffers = Array.fill(maxLayers, { Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2); });
+        recBuffer = Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
         
         volBus = Bus.control(context.server, 1).set(1.0);
         
@@ -70,7 +72,6 @@ Engine_MemoryPhysics : CroneEngine {
         Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
         
         synths = Array.fill(maxLayers, { arg i;
-            // Routing directly to context out
             Synth(\StrataLayer, [\buf, buffers[i], \out, context.out_b.index, \depth, i, \duration, 2.0], context.xg);
         });
 
