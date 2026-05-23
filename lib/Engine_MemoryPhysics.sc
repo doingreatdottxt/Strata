@@ -57,9 +57,11 @@ Engine_MemoryPhysics : CroneEngine {
         // 3. TRACKER ENGINE
         SynthDef(\InputTracker, { arg in;
             var input_signal = In.ar(in, 2);
-            var mono_sum = (input_signal[0] + input_signal[1]) * 0.5;
-            // Added 0.01 attack and 0.25 release to smooth out detection
-            var tracked_amp = Amplitude.kr(mono_sum, 0.01, 0.25);
+            // Sum inputs without halving so mono Left inputs register cleanly
+            var mono_sum = input_signal[0] + input_signal[1];
+            // Faster 0.005 attack catches hard initial transients
+            var tracked_amp = Amplitude.kr(mono_sum, 0.005, 0.2);
+            
             SendReply.kr(Impulse.kr(15), '/in_amp', [tracked_amp], 999);
         }).add;
 
