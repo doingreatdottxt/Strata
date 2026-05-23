@@ -39,17 +39,24 @@ function init()
         local amp = args[1]
         
         if not state.recording then
+          -- Arming gate: sound must fall well below threshold to re-arm
           if amp < (params:get("threshold") * 0.5) then
             state.auto_armed = true
           elseif amp > params:get("threshold") and state.auto_armed then
             toggle_formation()
           end
         elseif state.recording then
-          if amp < (params:get("threshold") * 0.5) then
+          -- Drop-off gate: lowered to 0.25 to capture long instrument decay tails
+          if amp < (params:get("threshold") * 0.25) then
             state.silence_frames = state.silence_frames + 1
+            
             if state.silence_frames > (params:get("release_time") * 15) then
-              toggle_formation()
-              state.silence_frames = 0
+              -- Minimum loop safeguard: Force at least 1.0 second of audio
+              if (util.time() - state.start_time) > 1.0 then
+                toggle_formation()
+                state.silence_frames = 0
+                state.auto_armed = false 
+              end
             end
           else
             state.silence_frames = 0
@@ -181,7 +188,6 @@ function enc(n, d)
 end
 
 function cleanup()
-  -- FIX: Safe threading validation check before throwing exit interrupts
   if redraw_metro ~= nil then 
     redraw_metro:stop()
     redraw_metro = nil
@@ -230,7 +236,6 @@ function redraw()
     screen.move(128, 64)
     screen.text_right("FREE")
   else
-    -- FIX: Adjusted dimensions to clear border clipping errors
     local current_beat = math.floor(clock.get_beats()) % 16
     
     for i = 0, 15 do
