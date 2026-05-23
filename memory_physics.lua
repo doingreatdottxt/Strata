@@ -12,7 +12,7 @@
 -- Encoder 3 - [Unassigned]
 
 engine.name = 'MemoryPhysics'
-local MAX_TIME = 10.0
+local MAX_TIME = 30.0 -- Expanded threshold for 16-beat loops at low BPMs
 
 local state = {
   recording = false,
@@ -84,7 +84,7 @@ function init()
 end
 
 function setup_params()
-  params:add_group("MEMORY PHYSICS QUANTIZATION", 6)
+  params:add_group("MEMORY PHYSICS CONFIG", 5)
   params:add_control("main_vol", "GLOBAL VOLUME", controlspec.new(0, 2, 'lin', 0.01, 1.0))
   params:set_action("main_vol", function(x) engine.set_volume(x) end)
   
@@ -92,8 +92,8 @@ function setup_params()
   params:add_control("threshold", "AUTO THRESHOLD", controlspec.new(0.001, 1.0, 'exp', 0.001, 0.05))
   params:add_control("release_time", "AUTO TIMEOUT RELEASE (S)", controlspec.new(0.1, 5.0, 'lin', 0.1, 2.0))
   
-  params:add_option("quant_mode", "QUANTIZATION STYLE", {"FREE", "BPM SYNC"}, 2)
-  params:add_option("sync_div", "SYNC RESOLUTION", {"1 BEAT", "1 BAR (4/4)"}, 2)
+  -- Consolidated to Free / Beat
+  params:add_option("sync_mode", "SYNC MODE", {"FREE", "BEAT"}, 2)
   
   params:add_trigger("excavate", "EXCAVATE ENTIRE SITE")
   params:set_action("excavate", function()
@@ -107,32 +107,30 @@ function setup_params()
 end
 
 function calculate_quantized_duration(raw_dur)
-  local mode = params:get("quant_mode")
-  
-  if mode == 1 then
+  -- FREE mode: Zero mathematical trimming, truly free looping
+  if params:get("sync_mode") == 1 then
     return math.max(0.1, math.min(raw_dur, MAX_TIME))
   end
   
+  -- BEAT mode: Trim to the nearest discrete beat boundary (1 to 16 steps)
   local bpm = clock.get_tempo()
   local beat_sec = 60.0 / bpm
-  local div = params:get("sync_div") == 1 and 1 or 4
-  local grid_sec = beat_sec * div
   
-  local count = math.floor((raw_dur / grid_sec) + 0.5)
-  count = math.max(1, count)
+  local count = math.floor((raw_dur / beat_sec) + 0.5)
+  count = util.clamp(count, 1, 16) 
   
-  local final_dur = count * grid_sec
+  local final_dur = count * beat_sec
   return math.min(final_dur, MAX_TIME)
 end
 
 function calculate_smart_shift()
-  if params:get("quant_mode") ~= 2 then return 0.0 end
+  if params:get("sync_mode") ~= 2 then return 0.0 end
   
   local bpm = clock.get_tempo()
   local beat_sec = 60.0 / bpm
-  local div = params:get("sync_div") == 1 and 1 or 4
   
-  local nearest_grid = math.floor((state.start_beat / div) + 0.5) * div
+  -- Snap phase exactly to the closest Norns rhythmic peak
+  local nearest_grid = math.floor(state.start_beat + 0.5)
   local beat_diff = nearest_grid - state.start_beat 
   
   return beat_diff * beat_sec
@@ -175,7 +173,8 @@ function key(n, z)
         state.surface_cycles = 0
       end
     else
-      params:set("auto_record", params:get("auto_record") == 1 and 2 or 1)
+      -- Toggle Sync Mode Free/Beat
+      params:set("sync_mode", params:get("sync_mode") == 1 and 2 or 1)
     end
   end
 end
@@ -230,33 +229,31 @@ function redraw()
     end
   end
   
-  -- Straight ON/OFF Flash Clock Pulse Indicator
-  local current_beats = clock.get_beats()
-  local beat_fraction = current_beats % 1.0
-  local is_downbeat = (math.floor(current_beats) % 4 == 0)
-  local clock_gate = beat_fraction < 0.5
-  
-  if params:get("quant_mode") == 2 and clock_gate then
-    if params:get("sync_div") == 2 and not is_downbeat then
-      screen.level(5)
-    else
-      screen.level(15)
-    end
-    
-    screen.move(122, 53)
-    screen.line(125, 50)
-    screen.line(128, 53)
-    screen.line(125, 56)
-    screen.line(122, 53)
-    screen.fill()
-  end
-  
-  -- Quantization Style Context Info Footer
-  screen.level(3)
-  screen.move(128, 64)
-  if params:get("quant_mode") == 1 then
+  -- Footer UI Elements
+  if params:get("sync_mode") == 1 then
+    screen.level(3)
+    screen.move(128, 64)
     screen.text_right("FREE")
   else
+    -- 16-Step Beat Visualizer
+    local current_beat = math.floor(clock.get_beats()) % 16
+    
+    for i = 0, 15 do
+      local x = (i * 6) + 4
+      local y = 58
+      if i <= current_beat then
+        screen.level(15)
+        screen.rect(x, y, 4, 4)
+        screen.fill()
+      else
+        screen.level(2)
+        screen.rect(x, y, 4, 4)
+        screen.stroke()
+      end
+    end
+    
+    screen.level(3)
+    screen.move(128, 64)
     local bpm_string = string.format("%.0f BPM", clock.get_tempo())
     screen.text_right(bpm_string)
   end
