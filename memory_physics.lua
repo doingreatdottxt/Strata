@@ -24,7 +24,8 @@ local state = {
   shift_held = false,
   silence_frames = 0,
   surface_cycles = 0,
-  auto_armed = true 
+  auto_armed = true,
+  current_amp = 0.0 -- Track live amplitude for the UI meter
 }
 
 local layer_phases = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
@@ -35,27 +36,28 @@ function init()
   
   osc.event = function(path, args, from)
     if path == "/in_amp" then
+      state.current_amp = args[1] -- Always track for UI
+      
       if params:get("auto_record") == 2 then
         local amp = args[1]
         
         if not state.recording then
-          -- Arming gate: sound must fall well below threshold to re-arm
-          if amp < (params:get("threshold") * 0.5) then
+          -- Arming gate: More forgiving. Signal just needs to drop below 70% of threshold
+          if amp < (params:get("threshold") * 0.7) then
             state.auto_armed = true
-          elseif amp > params:get("threshold") and state.auto_armed then
+          elseif amp >= params:get("threshold") and state.auto_armed then
             toggle_formation()
           end
         elseif state.recording then
-          -- Drop-off gate: lowered to 0.25 to capture long instrument decay tails
-          if amp < (params:get("threshold") * 0.25) then
+          -- Drop-off gate: Signal falls below 50% of threshold to trigger release countdown
+          if amp < (params:get("threshold") * 0.5) then
             state.silence_frames = state.silence_frames + 1
             
             if state.silence_frames > (params:get("release_time") * 15) then
-              -- Minimum loop safeguard: Force at least 1.0 second of audio
+              -- Force at least 1.0 second of audio so transients don't create micro-loops
               if (util.time() - state.start_time) > 1.0 then
                 toggle_formation()
                 state.silence_frames = 0
-                state.auto_armed = false 
               end
             end
           else
@@ -86,7 +88,9 @@ function init()
     end
   end
   
-  redraw_metro = metro.init(function() redraw() end, 1/15)
+  redraw_metro = metro.init()
+  redraw_metro.time = 1/15
+  redraw_metro.event = function() redraw() end
   redraw_metro:start()
 end
 
@@ -96,7 +100,8 @@ function setup_params()
   params:set_action("main_vol", function(x) engine.set_volume(x) end)
   
   params:add_option("auto_record", "RECORD TRIGGER MODE", {"MANUAL [K2]", "AUTOMATIC [AMP]"}, 2)
-  params:add_control("threshold", "AUTO THRESHOLD", controlspec.new(0.001, 1.0, 'exp', 0.001, 0.05))
+  -- Default threshold lowered slightly to accommodate quieter mono line inputs
+  params:add_control("threshold", "AUTO THRESHOLD", controlspec.new(0.001, 1.0, 'exp', 0.001, 0.02))
   params:add_control("release_time", "AUTO TIMEOUT RELEASE (S)", controlspec.new(0.1, 5.0, 'lin', 0.1, 2.0))
   
   params:add_option("sync_mode", "SYNC MODE", {"FREE", "BEAT"}, 2)
@@ -146,6 +151,7 @@ function toggle_formation()
     state.start_beat = clock.get_beats() 
     engine.record_start()
     state.recording = true
+    state.auto_armed = false
   else
     state.recording = false
     local measured_dur = util.time() - state.start_time
@@ -164,9 +170,6 @@ function key(n, z)
   elseif n == 2 and z == 1 then
     if not state.shift_held then
       toggle_formation()
-      if not state.recording and params:get("auto_record") == 2 then
-        state.auto_armed = false
-      end
     end
   elseif n == 3 and z == 1 then
     if state.shift_held then
@@ -188,19 +191,52 @@ function enc(n, d)
 end
 
 function cleanup()
-  if redraw_metro ~= nil then 
-    redraw_metro:stop()
-    redraw_metro = nil
-  end
+  -- Leave empty. Norns automatically garbage collects the metro.
+  -- Explicitly killing it here causes the pthread_cancel crash.
 end
 
 function redraw()
   screen.clear()
   screen.level(state.recording and 15 or 3)
   screen.move(0, 8)
-  local msg = state.recording and "FORMING STRATA" or "STABLE"
-  screen.text(msg .. " [" .. string.format("%.2f", state.duration) .. "s] C:" .. state.surface_cycles .. "/5")
+  local msg = state.recording and "REC" or "IDLE"
+  screen.text(msg .. " [" .. string.format("%.1f", state.duration) .. "s] C:" .. state.surface_cycles .. "/5")
   
+  -- AUTO-RECORD UI METER
+  if params:get("auto_record") == 2 then
+    local meter_width = 30
+    local meter_x = 126 - meter_width
+    
+    -- Status text
+    screen.move(meter_x - 4, 8)
+    if state.recording then
+      screen.level(15) screen.text_right("REC")
+    elseif state.auto_armed then
+      screen.level(5) screen.text_right("ARM")
+    else
+      screen.level(2) screen.text_right("WAIT")
+    end
+
+    -- Meter outline
+    screen.level(2)
+    screen.rect(meter_x, 2, meter_width, 6)
+    screen.stroke()
+    
+    -- Meter fill
+    local display_scale = 0.2 -- Normalizes how loud the bar looks visually
+    local fill_width = util.clamp(math.floor((state.current_amp / display_scale) * meter_width), 0, meter_width)
+    screen.level(10)
+    screen.rect(meter_x, 2, fill_width, 6)
+    screen.fill()
+    
+    -- Threshold marker line
+    local thresh_x = meter_x + util.clamp(math.floor((params:get("threshold") / display_scale) * meter_width), 0, meter_width)
+    screen.level(15)
+    screen.move(thresh_x, 1)
+    screen.line(thresh_x, 9)
+    screen.stroke()
+  end
+
   -- Render Geological Layers
   for i = 1, 6 do
     local y = 14 + (i * 7)
@@ -230,32 +266,25 @@ function redraw()
     end
   end
   
-  -- Footer UI Clean Context Segmentation
+  -- Footer UI
   if params:get("sync_mode") == 1 then
     screen.level(3)
     screen.move(128, 64)
     screen.text_right("FREE")
   else
     local current_beat = math.floor(clock.get_beats()) % 16
-    
     for i = 0, 15 do
       local x = (i * 5) + 2 
       local y = 59
       if i <= current_beat then
-        screen.level(15)
-        screen.rect(x, y, 3, 3)
-        screen.fill()
+        screen.level(15) screen.rect(x, y, 3, 3) screen.fill()
       else
-        screen.level(2)
-        screen.rect(x, y, 3, 3)
-        screen.stroke()
+        screen.level(2) screen.rect(x, y, 3, 3) screen.stroke()
       end
     end
-    
     screen.level(3)
     screen.move(128, 64)
-    local bpm_string = string.format("%.0f BPM", clock.get_tempo())
-    screen.text_right(bpm_string)
+    screen.text_right(string.format("%.0f BPM", clock.get_tempo()))
   end
   
   screen.update()
