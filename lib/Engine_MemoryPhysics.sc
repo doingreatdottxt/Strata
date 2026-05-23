@@ -14,7 +14,6 @@ Engine_MemoryPhysics : CroneEngine {
     alloc {
         luaAddr = NetAddr("127.0.0.1", 10111);
         
-        // Configured for 30 seconds to support 16-step phrases at low tempos
         buffers = Array.fill(maxLayers, { Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2); });
         recBuffer = Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
         
@@ -59,7 +58,9 @@ Engine_MemoryPhysics : CroneEngine {
         SynthDef(\InputTracker, { arg in;
             var input_signal = In.ar(in, 2);
             var mono_sum = (input_signal[0] + input_signal[1]) * 0.5;
-            SendReply.kr(Impulse.kr(15), '/in_amp', [Amplitude.kr(mono_sum)], 999);
+            // Added 0.01 attack and 0.25 release to smooth out detection
+            var tracked_amp = Amplitude.kr(mono_sum, 0.01, 0.25);
+            SendReply.kr(Impulse.kr(15), '/in_amp', [tracked_amp], 999);
         }).add;
 
         // 4. SURFACE RECORDING ENGINE
