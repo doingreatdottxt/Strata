@@ -7,14 +7,24 @@ Engine_MemoryPhysics : CroneEngine {
     *new { arg context, doneCallback; ^super.new(context, doneCallback); }
 
     alloc {
-        // --- Strata Allocations ---
-        buffers = Array.fill(maxLayers, { Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2); });
-        recBuffer = Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
-        volBus = Bus.control(context.server, 1).set(1.0);
-        
-        // --- FX/EQ Buses ---
-        fxBus = Bus.audio(context.server, 2);
-        eqBus = Bus.audio(context.server, 2);
+    // 1. Define Synths (Blueprint loading)
+    SynthDef(\StrataLayer, { ... }).add;
+    SynthDef(\MasterEQ, { ... }).add;
+    SynthDef(\FX_Router, { ... }).add;
+
+    // 2. Sync server to ensure blueprints are ready
+    context.server.sync;
+
+    // 3. Initialize Buses
+    fxBus = Bus.audio(context.server, 2);
+    eqBus = Bus.audio(context.server, 2);
+
+    // 4. Spawn Synths (Instantiate blueprints)
+    // IMPORTANT: fxSynth and eqSynth must be created AFTER the server syncs
+    fxSynth = Synth.tail(context.server, \FX_Router, [\in, fxBus, \out, eqBus]);
+    eqSynth = Synth.tail(context.server, \MasterEQ, [\in, eqBus, \out, context.out_b.index]);
+    
+    // ... rest of your layer synths ...
 
         // --- Strata Layer SynthDef ---
         SynthDef(\StrataLayer, { arg buf, out, depth=0, duration=2.0, t_reset=0, shift_offset=0;
