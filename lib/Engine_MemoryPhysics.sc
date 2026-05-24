@@ -17,7 +17,6 @@ Engine_MemoryPhysics : CroneEngine {
 
         // --- 2. SynthDefs ---
 
-        // Loop playback layer
         SynthDef(\StrataLayer, { arg buf, out, depth=0, duration=2.0, t_reset=0, shift_offset=0;
             var sig, phase, frames, layer_vol, vol_target;
             frames = duration * BufSampleRate.kr(buf);
@@ -32,18 +31,15 @@ Engine_MemoryPhysics : CroneEngine {
             Out.ar(out, sig * layer_vol * In.kr(volBus.index, 1));
         }).add;
 
-        // Amplitude tracking for Auto-Record
         SynthDef(\InputTracker, { arg in;
             var mono_sum = In.ar(in, 2).sum;
             SendReply.kr(Impulse.kr(15), '/in_amp', [Amplitude.kr(mono_sum, 0.005, 0.2)], 999);
         }).add;
 
-        // Surface loop recorder
         SynthDef(\SurfaceRecorder, { arg buf, in; 
             RecordBuf.ar(In.ar(in, 2), buf, recLevel: 1.0, preLevel: 0.0, loop: 0, doneAction: 0); 
         }).add;
 
-        // Master 3-Band EQ
         SynthDef(\MasterEQ, { arg in, out, lowGain=1.0, midGain=1.0, highGain=1.0, amp=0.8;
             var sig = In.ar(in, 2);
             var b0 = LPF.ar(sig, 80);
@@ -54,8 +50,6 @@ Engine_MemoryPhysics : CroneEngine {
             Out.ar(out, ((b0*lowGain) + ((b1+b2+b3)*midGain) + (b4*highGain)) * amp);
         }).add;
 
-        // --- SEPARATE EFFECTS SYNTHDEFS FOR STABILITY ---
-        
         SynthDef(\FX_Bypass, { arg in, out;
             Out.ar(out, In.ar(in, 2));
         }).add;
@@ -112,9 +106,9 @@ Engine_MemoryPhysics : CroneEngine {
         Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
         synths = Array.fill(maxLayers, { arg i; Synth(\StrataLayer, [\buf, buffers[i], \out, fxBus, \depth, i], context.xg); });
         
-        // Default startup target is Bypass node
-        fxSynth = Synth.tail(context.server, \FX_Bypass, [\in, fxBus, \out, eqBus]);
-        eqSynth = Synth.tail(context.server, \MasterEQ, [\in, eqBus, \out, context.out_b.index]);
+        // FIX: Bound both synths strictly to context.xg (Norns Group) in tail order
+        fxSynth = Synth.new(\FX_Bypass, [\in, fxBus, \out, eqBus], context.xg, \addToTail);
+        eqSynth = Synth.new(\MasterEQ, [\in, eqBus, \out, context.out_b.index], context.xg, \addToTail);
 
         // --- 4. Lua API Commands ---
         this.addCommand(\shift_layers, "ff", { arg msg;
@@ -140,12 +134,12 @@ Engine_MemoryPhysics : CroneEngine {
         this.addCommand(\set_eq_mid, "f", { arg msg; eqSynth.set(\midGain, msg[1]); });
         this.addCommand(\set_eq_high, "f", { arg msg; eqSynth.set(\highGain, msg[1]); });
 
-        // Dynamic Switcher Logic for safely changing effects nodes
         this.addCommand(\select_fx, "i", { arg msg; 
             var fx_type = msg[1];
             var defs = [\FX_Bypass, \FX_Abyss, \FX_Shatter, \FX_Breeze, \FX_Crackle];
             fxSynth.free;
-            fxSynth = Synth.tail(context.server, defs[fx_type], [\in, fxBus, \out, eqBus]);
+            // FIX: Ensure the new FX synth explicitly drops in *before* the Master EQ synth
+            fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus, \out, eqBus]);
         });
         
         this.addCommand(\set_fx_p1, "f", { arg msg; fxSynth.set(\p1, msg[1]); });
