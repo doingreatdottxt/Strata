@@ -34,7 +34,11 @@ local state = {
   fx_p3 = 0.5,
   eq_low = 1.0,
   eq_mid = 1.0,
-  eq_high = 1.0 
+  eq_high = 1.0,
+
+  -- Background Rhythm Generator States
+  seq = {1.0, 0.0, 0.5, 0.0, 1.0, 0.2, 0.0, 0.7, 1.0, 0.0, 0.4, 0.0, 0.8, 0.0, 0.5, 0.0},
+  seq_step = 1
 }
 
 local fx_names = {"BYPASS", "ABYSS", "SHATTER", "BREEZE", "CRACKLE"}
@@ -102,10 +106,41 @@ function init()
     end
   end
   
+  -- Background Sequence Clock Execution Loop (16th notes)
+  clock.run(function()
+    while true do
+      clock.sync(1/4) -- Sync and advance exactly every 16th note
+      
+      state.seq_step = (state.seq_step % 16) + 1
+      local mod_value = state.seq[state.seq_step]
+      local target = params:get("seq_target")
+      
+      -- Apply step modulation values dynamically over user's base encoder values
+      if target == 2 then -- Modulate Param 1
+         engine.set_fx_p1(util.clamp(state.fx_p1 * mod_value, 0, 1))
+      elseif target == 3 then -- Modulate Param 2
+         engine.set_fx_p2(util.clamp(state.fx_p2 * mod_value, 0, 1))
+      elseif target == 4 then -- Modulate Param 3
+         engine.set_fx_p3(util.clamp(state.fx_p3 * mod_value, 0, 1))
+      end
+    end
+  end)
+  
   redraw_metro = metro.init()
   redraw_metro.time = 1/15
   redraw_metro.event = function() redraw() end
   redraw_metro:start()
+end
+
+function randomize_sequence()
+  local density = params:get("seq_density") / 100
+  for i = 1, 16 do
+    if math.random() < density then
+      state.seq[i] = math.random() -- Assign a random modulation depth value
+    else
+      state.seq[i] = 0.0
+    end
+  end
 end
 
 function setup_params()
@@ -123,6 +158,14 @@ function setup_params()
     state.auto_armed = true
     engine.clear_layers()
   end)
+  
+  -- New Background Rhythm Generator Parameters
+  params:add_group("STRATA RHYTHM GENERATOR", 3)
+  params:add_option("seq_target", "MODULATION TARGET", {"OFF", "FX PARAM 1", "FX PARAM 2", "FX PARAM 3"}, 1)
+  params:add_control("seq_density", "RANDOM STEP DENSITY %", controlspec.new(0, 100, 'lin', 1, 50))
+  params:add_trigger("seq_randomize", "RANDOMIZE SEQUENCE ARRAY")
+  params:set_action("seq_randomize", function() randomize_sequence() end)
+  
   params:bang()
 end
 
@@ -229,13 +272,22 @@ function redraw()
     end
   end
   
-  -- Footer UI (Sync, FX, and EQ Overlays)
+  -- Rhythmic Grid Footer UI
+  -- Visual upgrade: Steps render vertically to show individual modulation depth values!
   if params:get("sync_mode") == 2 then
-    local current_beat = math.floor(clock.get_beats()) % 16
-    for i = 0, 15 do
-      screen.level(i <= current_beat and 15 or 2)
-      screen.rect((i * 5) + 2, 59, 3, 3)
-      if i <= current_beat then screen.fill() else screen.stroke() end
+    local current_beat_step = math.floor(clock.get_beats() * 4) % 16 + 1
+    for i = 1, 16 do
+      local step_mod = state.seq[i]
+      local bar_height = math.floor(step_mod * 5)
+      
+      screen.level(i == state.seq_step and 15 or 2)
+      screen.rect((i * 5) + 2, 62 - bar_height, 3, 1 + bar_height)
+      
+      if i == state.seq_step then 
+        screen.fill() 
+      else 
+        screen.stroke() 
+      end
     end
   end
   
@@ -246,12 +298,10 @@ function redraw()
   
   -- FX and EQ Display
   if state.shift_held then
-    -- Show EQ values when shift is held
     screen.level(15)
     screen.move(0, 64)
     screen.text(string.format("EQ: H%.1f M%.1f L%.1f", state.eq_high, state.eq_mid, state.eq_low))
   elseif state.active_fx > 0 then
-    -- Show active FX name when unshifted and an effect is on
     screen.level(15)
     screen.move(0, 64)
     screen.text("FX:" .. fx_names[state.active_fx+1])
