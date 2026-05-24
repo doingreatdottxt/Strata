@@ -38,7 +38,8 @@ local state = {
 
   -- Background Rhythm Generator States
   seq = {1.0, 0.0, 0.5, 0.0, 1.0, 0.2, 0.0, 0.7, 1.0, 0.0, 0.4, 0.0, 0.8, 0.0, 0.5, 0.0},
-  seq_step = 1
+  seq_step = 1,
+  clock_active = false
 }
 
 local fx_names = {"BYPASS", "ABYSS", "SHATTER", "BREEZE", "CRACKLE"}
@@ -106,25 +107,33 @@ function init()
     end
   end
   
-  -- Background Sequence Clock Execution Loop (16th notes)
+  -- Enable background sequence tracking cleanly
+  state.clock_active = true
   clock.run(function()
-    while true do
-      clock.sync(1/4) -- Sync and advance exactly every 16th note
+    while state.clock_active do
+      clock.sync(1/4) 
       
-      state.seq_step = (state.seq_step % 16) + 1
-      local mod_value = state.seq[state.seq_step]
-      local target = params:get("seq_target")
-      
-      -- Apply step modulation values dynamically over user's base encoder values
-      if target == 2 then -- Modulate Param 1
-         engine.set_fx_p1(util.clamp(state.fx_p1 * mod_value, 0, 1))
-      elseif target == 3 then -- Modulate Param 2
-         engine.set_fx_p2(util.clamp(state.fx_p2 * mod_value, 0, 1))
-      elseif target == 4 then -- Modulate Param 3
-         engine.set_fx_p3(util.clamp(state.fx_p3 * mod_value, 0, 1))
+      if state.clock_active then
+        state.seq_step = (state.seq_step % 16) + 1
+        local mod_value = state.seq[state.seq_step]
+        local target = params:get("seq_target")
+        
+        if target == 2 then 
+           engine.set_fx_p1(util.clamp(state.fx_p1 * mod_value, 0, 1))
+        elseif target == 3 then 
+           engine.set_fx_p2(util.clamp(state.fx_p2 * mod_value, 0, 1))
+        elseif target == 4 then 
+           engine.set_fx_p3(util.clamp(state.fx_p3 * mod_value, 0, 1))
+        end
       end
     end
   end)
+  
+  -- Allocate metro loop with safety checks
+  if redraw_metro ~= nil then
+    redraw_metro:stop()
+    metro.free(redraw_metro.id)
+  end
   
   redraw_metro = metro.init()
   redraw_metro.time = 1/15
@@ -136,7 +145,7 @@ function randomize_sequence()
   local density = params:get("seq_density") / 100
   for i = 1, 16 do
     if math.random() < density then
-      state.seq[i] = math.random() -- Assign a random modulation depth value
+      state.seq[i] = math.random() 
     else
       state.seq[i] = 0.0
     end
@@ -159,7 +168,6 @@ function setup_params()
     engine.clear_layers()
   end)
   
-  -- New Background Rhythm Generator Parameters
   params:add_group("STRATA RHYTHM GENERATOR", 3)
   params:add_option("seq_target", "MODULATION TARGET", {"OFF", "FX PARAM 1", "FX PARAM 2", "FX PARAM 3"}, 1)
   params:add_control("seq_density", "RANDOM STEP DENSITY %", controlspec.new(0, 100, 'lin', 1, 50))
@@ -226,12 +234,10 @@ end
 
 function enc(n, d)
   if state.shift_held then
-    -- Universal EQ Control (Shift + Encoders)
     if n == 1 then state.eq_high = util.clamp(state.eq_high + d*0.05, 0, 2); engine.set_eq_high(state.eq_high)
     elseif n == 2 then state.eq_mid = util.clamp(state.eq_mid + d*0.05, 0, 2); engine.set_eq_mid(state.eq_mid)
     elseif n == 3 then state.eq_low = util.clamp(state.eq_low + d*0.05, 0, 2); engine.set_eq_low(state.eq_low) end
   else
-    -- Contextual FX Parameters or Master Volume
     if state.active_fx > 0 then
       if n == 1 then state.fx_p1 = util.clamp(state.fx_p1 + d*0.02, 0, 1); engine.set_fx_p1(state.fx_p1)
       elseif n == 2 then state.fx_p2 = util.clamp(state.fx_p2 + d*0.02, 0, 1); engine.set_fx_p2(state.fx_p2)
@@ -242,8 +248,14 @@ function enc(n, d)
   end
 end
 
+-- FIX: Explicit cleanup loop safely cancels threads to prevent pthread errors
 function cleanup()
-  -- Intentionally left empty to prevent pthread_cancel errors
+  state.clock_active = false
+  if redraw_metro ~= nil then
+    redraw_metro:stop()
+    metro.free(redraw_metro.id)
+    redraw_metro = nil
+  end
 end
 
 function redraw()
@@ -252,7 +264,6 @@ function redraw()
   screen.move(0, 8)
   screen.text((state.recording and "REC" or "IDLE") .. " [" .. string.format("%.1f", state.duration) .. "s] C:" .. state.surface_cycles .. "/5")
   
-  -- Render Geological Layers
   for i = 1, 6 do
     local y = 14 + (i * 7)
     if i <= state.layers_active then
@@ -272,31 +283,20 @@ function redraw()
     end
   end
   
-  -- Rhythmic Grid Footer UI
-  -- Visual upgrade: Steps render vertically to show individual modulation depth values!
   if params:get("sync_mode") == 2 then
-    local current_beat_step = math.floor(clock.get_beats() * 4) % 16 + 1
     for i = 1, 16 do
       local step_mod = state.seq[i]
       local bar_height = math.floor(step_mod * 5)
-      
       screen.level(i == state.seq_step and 15 or 2)
       screen.rect((i * 5) + 2, 62 - bar_height, 3, 1 + bar_height)
-      
-      if i == state.seq_step then 
-        screen.fill() 
-      else 
-        screen.stroke() 
-      end
+      if i == state.seq_step then screen.fill() else screen.stroke() end
     end
   end
   
-  -- Tempo text
   screen.level(3)
   screen.move(128, 64)
   screen.text_right(params:get("sync_mode") == 1 and "FREE" or string.format("%.0f BPM", clock.get_tempo()))
   
-  -- FX and EQ Display
   if state.shift_held then
     screen.level(15)
     screen.move(0, 64)
