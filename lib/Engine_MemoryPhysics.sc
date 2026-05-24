@@ -17,7 +17,6 @@ Engine_MemoryPhysics : CroneEngine {
 
         // --- 2. SynthDefs ---
 
-        // Loop playback layer
         SynthDef(\StrataLayer, { arg buf, out, depth=0, duration=2.0, t_reset=0, shift_offset=0;
             var sig, phase, frames, layer_vol, vol_target;
             frames = duration * BufSampleRate.kr(buf);
@@ -27,23 +26,21 @@ Engine_MemoryPhysics : CroneEngine {
             SendReply.kr(Impulse.kr(15), '/layer_phase', [depth, (A2K.kr(phase)/frames)], 998);
             SendReply.kr(HPZ1.kr(A2K.kr(phase)/frames) < -0.5, '/loop_reset', [depth], 996);
 
-            vol_target = Select.kr(depth, [1.0, 0.5, 0.2, 0.0, 0.0, 0.0]);
+            // FIX: Layers 2, 3, 4 are now audible and fade correctly. Layers 5 and 6 remain hidden.
+            vol_target = Select.kr(depth, [1.0, 0.6, 0.3, 0.1, 0.0, 0.0]);
             layer_vol = VarLag.kr(vol_target, 0.5, warp: \sine); 
             Out.ar(out, sig * layer_vol * In.kr(volBus.index, 1));
         }).add;
 
-        // Amplitude tracking for Auto-Record
         SynthDef(\InputTracker, { arg in;
             var mono_sum = In.ar(in, 2).sum;
             SendReply.kr(Impulse.kr(15), '/in_amp', [Amplitude.kr(mono_sum, 0.005, 0.2)], 999);
         }).add;
 
-        // Surface loop recorder
         SynthDef(\SurfaceRecorder, { arg buf, in; 
             RecordBuf.ar(In.ar(in, 2), buf, recLevel: 1.0, preLevel: 0.0, loop: 0, doneAction: 0); 
         }).add;
 
-        // Master 3-Band EQ
         SynthDef(\MasterEQ, { arg in, out, lowGain=1.0, midGain=1.0, highGain=1.0, amp=0.8;
             var sig = In.ar(in, 2);
             var b0 = LPF.ar(sig, 80);
@@ -54,7 +51,6 @@ Engine_MemoryPhysics : CroneEngine {
             Out.ar(out, ((b0*lowGain) + ((b1+b2+b3)*midGain) + (b4*highGain)) * amp);
         }).add;
 
-        // Multi-Effects Router
         SynthDef(\FX_Router, { arg in, out, fx_type=0, p1=0.5, p2=0.5, p3=0.5;
             var sig = In.ar(in, 2);
             var monoDry = sig.sum * 0.5;
@@ -104,28 +100,35 @@ Engine_MemoryPhysics : CroneEngine {
         // --- 3. Sync and Instantiate ---
         context.server.sync;
 
-        // Input tracker (reads hardware input)
         Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
         
-        // Loopers (outputting to fxBus instead of hardware out)
         synths = Array.fill(maxLayers, { arg i; Synth(\StrataLayer, [\buf, buffers[i], \out, fxBus, \depth, i], context.xg); });
         
-        // FX and EQ routing chain
         fxSynth = Synth.tail(context.server, \FX_Router, [\in, fxBus, \out, eqBus]);
         eqSynth = Synth.tail(context.server, \MasterEQ, [\in, eqBus, \out, context.out_b.index]);
 
 
-        // --- 4. Lua API Commands ---
-
-        // Looper Commands
+        // --- 4. Commands ---
         this.addCommand(\shift_layers, "ff", { arg msg;
+            // FIX: Smoothly shift layers down without taxing the CPU
+            buffers = buffers.rotate(1);
+            synths = synths.rotate(1);
+            
+            // Re-assign depths so the audio crossfades to the new layer volume
+            synths.do { arg syn, i; syn.set(\depth, i); };
+            
             recBuffer.copyData(buffers[0]);
             synths[0].set(\duration, msg[1], \t_reset, 1, \shift_offset, msg[2]);
         });
         
         this.addCommand(\erode_layer, "", { 
-            synths.rotate(1); 
-            SystemClock.sched(0.6, { buffers[synths.size-1].zero; nil; }); 
+            // FIX: Pull buried layers smoothly back up to the surface
+            buffers = buffers.rotate(-1);
+            synths = synths.rotate(-1);
+            
+            synths.do { arg syn, i; syn.set(\depth, i); };
+            
+            SystemClock.sched(0.6, { buffers[buffers.size-1].zero; nil; }); 
         });
         
         this.addCommand(\clear_layers, "", { buffers.do(_.zero); });
@@ -133,13 +136,11 @@ Engine_MemoryPhysics : CroneEngine {
         this.addCommand(\record_start, "", { recBuffer.zero; recSynth = Synth(\SurfaceRecorder, [\buf, recBuffer, \in, context.in_b[0].index], context.xg); });
         this.addCommand(\record_stop, "", { recSynth.free; });
 
-        // EQ Commands
         this.addCommand(\main_vol, "f", { arg msg; eqSynth.set(\amp, msg[1]); });
         this.addCommand(\set_eq_low, "f", { arg msg; eqSynth.set(\lowGain, msg[1]); });
         this.addCommand(\set_eq_mid, "f", { arg msg; eqSynth.set(\midGain, msg[1]); });
         this.addCommand(\set_eq_high, "f", { arg msg; eqSynth.set(\highGain, msg[1]); });
 
-        // FX Commands
         this.addCommand(\select_fx, "i", { arg msg; fxSynth.set(\fx_type, msg[1]); });
         this.addCommand(\set_fx_p1, "f", { arg msg; fxSynth.set(\p1, msg[1]); });
         this.addCommand(\set_fx_p2, "f", { arg msg; fxSynth.set(\p2, msg[1]); });
