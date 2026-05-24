@@ -218,6 +218,14 @@ function key(n, z)
     if state.shift_held then
         state.active_fx = (state.active_fx + 1) % 5
         engine.select_fx(state.active_fx)
+        
+        -- Force parameters to re-sync immediately to the new synth node instance
+        clock.run(function()
+          clock.sleep(0.01)
+          engine.set_fx_p1(state.fx_p1)
+          engine.set_fx_p2(state.fx_p2)
+          engine.set_fx_p3(state.fx_p3)
+        end)
     else
         toggle_formation()
     end
