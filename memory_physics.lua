@@ -39,7 +39,8 @@ local state = {
   -- Background Rhythm Generator States
   seq = {1.0, 0.0, 0.5, 0.0, 1.0, 0.2, 0.0, 0.7, 1.0, 0.0, 0.4, 0.0, 0.8, 0.0, 0.5, 0.0},
   seq_step = 1,
-  clock_active = false
+  clock_active = false,
+  last_target = 1
 }
 
 local fx_names = {"BYPASS", "ABYSS", "SHATTER", "BREEZE", "CRACKLE"}
@@ -53,7 +54,6 @@ function init()
     if path == "/in_amp" then
       state.current_amp = args[1]
       
-      -- Auto-Erosion logic: If in auto mode and no activity for 16 beats
       if params:get("auto_record") == 2 and state.layers_active > 0 then
         local current_beat = math.floor(clock.get_beats())
         if (current_beat - state.last_activity_beat) >= 16 then
@@ -107,7 +107,6 @@ function init()
     end
   end
   
-  -- Enable background sequence tracking cleanly
   state.clock_active = true
   clock.run(function()
     while state.clock_active do
@@ -118,18 +117,34 @@ function init()
         local mod_value = state.seq[state.seq_step]
         local target = params:get("seq_target")
         
+        -- Restore parameters back to baseline if target is changed or turned OFF
+        if target ~= state.last_target then
+           engine.set_fx_p1(state.fx_p1)
+           engine.set_fx_p2(state.fx_p2)
+           engine.set_fx_p3(state.fx_p3)
+           engine.set_eq_low(state.eq_low)
+           engine.set_eq_mid(state.eq_mid)
+           engine.set_eq_high(state.eq_high)
+           state.last_target = target
+        end
+        
         if target == 2 then 
            engine.set_fx_p1(util.clamp(state.fx_p1 * mod_value, 0, 1))
         elseif target == 3 then 
            engine.set_fx_p2(util.clamp(state.fx_p2 * mod_value, 0, 1))
         elseif target == 4 then 
            engine.set_fx_p3(util.clamp(state.fx_p3 * mod_value, 0, 1))
+        elseif target == 5 then 
+           engine.set_eq_low(util.clamp(state.eq_low * mod_value, 0, 2))
+        elseif target == 6 then 
+           engine.set_eq_mid(util.clamp(state.eq_mid * mod_value, 0, 2))
+        elseif target == 7 then 
+           engine.set_eq_high(util.clamp(state.eq_high * mod_value, 0, 2))
         end
       end
     end
   end)
   
-  -- Allocate metro loop with safety checks
   if redraw_metro ~= nil then
     redraw_metro:stop()
     metro.free(redraw_metro.id)
@@ -169,7 +184,8 @@ function setup_params()
   end)
   
   params:add_group("STRATA RHYTHM GENERATOR", 3)
-  params:add_option("seq_target", "MODULATION TARGET", {"OFF", "FX PARAM 1", "FX PARAM 2", "FX PARAM 3"}, 1)
+  -- Expanded targets to include EQ Bands
+  params:add_option("seq_target", "MODULATION TARGET", {"OFF", "FX PARAM 1", "FX PARAM 2", "FX PARAM 3", "EQ LOW", "EQ MID", "EQ HIGH"}, 1)
   params:add_control("seq_density", "RANDOM STEP DENSITY %", controlspec.new(0, 100, 'lin', 1, 50))
   params:add_trigger("seq_randomize", "RANDOMIZE SEQUENCE ARRAY")
   params:set_action("seq_randomize", function() randomize_sequence() end)
@@ -219,7 +235,6 @@ function key(n, z)
         state.active_fx = (state.active_fx + 1) % 5
         engine.select_fx(state.active_fx)
         
-        -- Force parameters to re-sync immediately to the new synth node instance
         clock.run(function()
           clock.sleep(0.01)
           engine.set_fx_p1(state.fx_p1)
@@ -256,7 +271,6 @@ function enc(n, d)
   end
 end
 
--- FIX: Explicit cleanup loop safely cancels threads to prevent pthread errors
 function cleanup()
   state.clock_active = false
   if redraw_metro ~= nil then
