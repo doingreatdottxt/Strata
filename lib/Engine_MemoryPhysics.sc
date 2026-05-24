@@ -30,20 +30,50 @@ Engine_MemoryPhysics : CroneEngine {
         }).add;
 
         // --- FX_Router and MasterEQ (Same as previously defined) ---
-        SynthDef(\MasterEQ, { arg in, out, lowGain=1.0, midGain=1.0, highGain=1.0, amp=0.8;
-            var sig = In.ar(in, 2);
-            var b0 = LPF.ar(sig, 80);
-            var b1 = BPF.ar(sig, 250, 1.0);
-            var b2 = BPF.ar(sig, 1000, 1.0);
-            var b3 = BPF.ar(sig, 4000, 1.0);
-            var b4 = HPF.ar(sig, 8000);
-            Out.ar(out, ((b0*lowGain) + ((b1+b2+b3)*midGain) + (b4*highGain)) * amp);
-        }).add;
-
-        SynthDef(\FX_Router, { arg in, out, fx_type=0, p1=0.5, p2=0.5, p3=0.5;
+       SynthDef(\FX_Router, { arg in, out, fx_type=0, p1=0.5, p2=0.5, p3=0.5;
             var sig = In.ar(in, 2);
             var monoDry = sig.sum * 0.5;
-            // ... (Insert Abyss/Shatter/Breeze/Crackle blocks here as before) ...
+            var abyss, shatter, breeze, crackle; // <--- THESE MUST BE DECLARED HERE
+            
+            // Define each effect within the scope of the SynthDef
+            abyss = {
+                var shimmerLoop = LocalIn.ar(1) + monoDry;
+                var wetAbyss;
+                shimmerLoop = PitchShift.ar(shimmerLoop, 0.1, 2.0, 0.001, 0.001);
+                shimmerLoop = LPF.ar(shimmerLoop, 8000);
+                LocalOut.ar(shimmerLoop * (p2 * 0.85));
+                wetAbyss = monoDry + (shimmerLoop * p2);
+                8.do { wetAbyss = AllpassC.ar(wetAbyss, 0.1, LFNoise2.kr(0.1 + (p3 * 0.5)).range(0.01, 0.05 + (p3 * 0.04)), 1.0 + (p1 * 5.0)); };
+                wetAbyss = LPF.ar(wetAbyss, 12000 - (p1 * 8000));
+                XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (p1 * 2) - 1);
+            }.value;
+
+            shatter = {
+                var fb = LocalIn.ar(1) + monoDry;
+                var clock = LFNoise0.kr(2 + (p1 * 18));
+                var delayTime = SelectX.kr(p2, [0.4, clock.range(0.02, 0.4)]);
+                var wetShatter = DelayC.ar(fb, 1.0, Lag.kr(delayTime, 0.05));
+                wetShatter = (wetShatter * (1.0 + (p3 * 4.0))).tanh;
+                wetShatter = LPF.ar(wetShatter, 10000 - (p3 * 8000));
+                wetShatter = HPF.ar(wetShatter, 40 + (p3 * 400));
+                LocalOut.ar(wetShatter * (0.6 + (p2 * 0.25)));
+                XFade2.ar(sig, wetShatter ! 2, (p2 * 2) - 1); 
+            }.value;
+
+            breeze = {
+                var chorused = DelayC.ar(monoDry, 0.2, SinOsc.kr(0.5 + (p1 * 2.0)).range(0.005, 0.01 + (p1 * 0.02)));
+                var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (p1 * 400)), 1.0, 0.7 + (p2 * 0.29), 0.1);
+                wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (p1 * 0.2)));
+                XFade2.ar(sig, wetBreeze, (p3 * 2) - 1);
+            }.value;
+
+            crackle = {
+                var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (p1 * 12)), Dust.ar(10 + (p1 * 20))]), 0.001, 0.03);
+                var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - p2) * 0.05), 0.5 + (p2 * 1.5));
+                var wetCrackle = HPF.ar(echo, 1500) ! 2;
+                XFade2.ar(sig, wetCrackle, (p3 * 2) - 1);
+            }.value;
+
             Out.ar(out, Select.ar(fx_type, [sig, abyss, shatter, breeze, crackle]));
         }).add;
 
