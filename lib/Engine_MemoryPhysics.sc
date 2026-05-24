@@ -54,50 +54,80 @@ Engine_MemoryPhysics : CroneEngine {
             Out.ar(out, In.ar(in, 2));
         }).add;
 
+        // FIXED: Bulletproofed Abyss 
         SynthDef(\FX_Abyss, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
             var sig = In.ar(in, 2);
             var monoDry = sig.sum * 0.5;
+            
+            // Lag inputs to prevent rhythm generator step-jumps from shocking the filters
+            var sp1 = Lag.kr(p1, 0.05);
+            var sp2 = Lag.kr(p2, 0.05);
+            var sp3 = Lag.kr(p3, 0.05);
+            
             var shimmerLoop = LocalIn.ar(1) + monoDry;
             var wetAbyss;
+            
             shimmerLoop = PitchShift.ar(shimmerLoop, 0.1, 2.0, 0.001, 0.001);
             shimmerLoop = LPF.ar(shimmerLoop, 8000);
-            LocalOut.ar(shimmerLoop * (p2 * 0.85));
-            wetAbyss = monoDry + (shimmerLoop * p2);
-            8.do { wetAbyss = AllpassC.ar(wetAbyss, 0.1, LFNoise2.kr(0.1 + (p3 * 0.5)).range(0.01, 0.05 + (p3 * 0.04)), 1.0 + (p1 * 5.0)); };
-            wetAbyss = LPF.ar(wetAbyss, 12000 - (p1 * 8000));
-            Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (p1 * 2) - 1));
+            
+            // SAFETY VALVES: Remove silent sub-frequencies and mathematically cap amplitude
+            shimmerLoop = LeakDC.ar(shimmerLoop);
+            shimmerLoop = shimmerLoop.tanh;
+            
+            LocalOut.ar(shimmerLoop * (sp2 * 0.85));
+            wetAbyss = monoDry + (shimmerLoop * sp2);
+            
+            8.do { wetAbyss = AllpassC.ar(wetAbyss, 0.1, LFNoise2.kr(0.1 + (sp3 * 0.5)).range(0.01, 0.05 + (sp3 * 0.04)), 1.0 + (sp1 * 5.0)); };
+            wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1 * 8000));
+            
+            // Final safety limiter to guarantee no server crashing
+            wetAbyss = Limiter.ar(wetAbyss, 0.95, 0.01);
+            
+            Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1 * 2) - 1));
         }).add;
 
         SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
             var sig = In.ar(in, 2);
+            var sp1 = Lag.kr(p1, 0.05);
+            var sp2 = Lag.kr(p2, 0.05);
+            var sp3 = Lag.kr(p3, 0.05);
             var monoDry = sig.sum * 0.5;
             var fb = LocalIn.ar(1) + monoDry;
-            var clock = LFNoise0.kr(2 + (p1 * 18));
-            var delayTime = SelectX.kr(p2, [0.4, clock.range(0.02, 0.4)]);
+            var clock = LFNoise0.kr(2 + (sp1 * 18));
+            var delayTime = SelectX.kr(sp2, [0.4, clock.range(0.02, 0.4)]);
             var wetShatter = DelayC.ar(fb, 1.0, Lag.kr(delayTime, 0.05));
-            wetShatter = (wetShatter * (1.0 + (p3 * 4.0))).tanh;
-            wetShatter = LPF.ar(wetShatter, 10000 - (p3 * 8000));
-            wetShatter = HPF.ar(wetShatter, 40 + (p3 * 400));
-            LocalOut.ar(wetShatter * (0.6 + (p2 * 0.25)));
-            Out.ar(out, XFade2.ar(sig, wetShatter ! 2, (p2 * 2) - 1));
+            
+            wetShatter = LeakDC.ar(wetShatter);
+            wetShatter = (wetShatter * (1.0 + (sp3 * 4.0))).tanh; // Existing safety valve
+            wetShatter = LPF.ar(wetShatter, 10000 - (sp3 * 8000));
+            wetShatter = HPF.ar(wetShatter, 40 + (sp3 * 400));
+            
+            LocalOut.ar(wetShatter * (0.6 + (sp2 * 0.25)));
+            Out.ar(out, XFade2.ar(sig, wetShatter ! 2, (sp2 * 2) - 1));
         }).add;
 
         SynthDef(\FX_Breeze, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
             var sig = In.ar(in, 2);
+            var sp1 = Lag.kr(p1, 0.05);
+            var sp2 = Lag.kr(p2, 0.05);
+            var sp3 = Lag.kr(p3, 0.05);
             var monoDry = sig.sum * 0.5;
-            var chorused = DelayC.ar(monoDry, 0.2, SinOsc.kr(0.5 + (p1 * 2.0)).range(0.005, 0.01 + (p1 * 0.02)));
-            var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (p1 * 400)), 1.0, 0.7 + (p2 * 0.29), 0.1);
-            wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (p1 * 0.2)));
-            Out.ar(out, XFade2.ar(sig, wetBreeze, (p3 * 2) - 1));
+            var chorused = DelayC.ar(monoDry, 0.2, SinOsc.kr(0.5 + (sp1 * 2.0)).range(0.005, 0.01 + (sp1 * 0.02)));
+            var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (sp1 * 400)), 1.0, 0.7 + (sp2 * 0.29), 0.1);
+            wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (sp1 * 0.2)));
+            Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
         }).add;
 
         SynthDef(\FX_Crackle, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
             var sig = In.ar(in, 2);
+            var sp1 = Lag.kr(p1, 0.05);
+            var sp2 = Lag.kr(p2, 0.05);
+            var sp3 = Lag.kr(p3, 0.05);
             var monoDry = sig.sum * 0.5;
-            var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (p1 * 12)), Dust.ar(10 + (p1 * 20))]), 0.001, 0.03);
-            var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - p2) * 0.05), 0.5 + (p2 * 1.5));
+            var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (sp1 * 12)), Dust.ar(10 + (sp1 * 20))]), 0.001, 0.03);
+            var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.5 + (sp2 * 1.5));
             var wetCrackle = HPF.ar(echo, 1500) ! 2;
-            Out.ar(out, XFade2.ar(sig, wetCrackle, (p3 * 2) - 1));
+            Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
         }).add;
 
         // --- 3. Sync and Instantiate ---
@@ -106,7 +136,6 @@ Engine_MemoryPhysics : CroneEngine {
         Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
         synths = Array.fill(maxLayers, { arg i; Synth(\StrataLayer, [\buf, buffers[i], \out, fxBus, \depth, i], context.xg); });
         
-        // FIX: Bound both synths strictly to context.xg (Norns Group) in tail order
         fxSynth = Synth.new(\FX_Bypass, [\in, fxBus, \out, eqBus], context.xg, \addToTail);
         eqSynth = Synth.new(\MasterEQ, [\in, eqBus, \out, context.out_b.index], context.xg, \addToTail);
 
@@ -138,7 +167,6 @@ Engine_MemoryPhysics : CroneEngine {
             var fx_type = msg[1];
             var defs = [\FX_Bypass, \FX_Abyss, \FX_Shatter, \FX_Breeze, \FX_Crackle];
             fxSynth.free;
-            // FIX: Ensure the new FX synth explicitly drops in *before* the Master EQ synth
             fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus, \out, eqBus]);
         });
         
