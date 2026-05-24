@@ -25,14 +25,14 @@ Engine_MemoryPhysics : CroneEngine {
         durations = Array.fill(maxLayers, { 2.0 });
         synthDepths = Array.fill(maxLayers, { arg i; i });
 
-        // FX Routing Buses
         fxBus = Bus.audio(context.server, 2);
         eqBus = Bus.audio(context.server, 2);
 
         // ==========================================
         // 1. MASTER EQ ENGINE
         // ==========================================
-        SynthDef(\MasterEQ, { arg in, out, lowGain=1.0, midGain=1.0, highGain=1.0;
+        // ADDED: 'amp' argument to control the master volume from Lua
+        SynthDef(\MasterEQ, { arg in, out, lowGain=1.0, midGain=1.0, highGain=1.0, amp=0.8;
             var sig = In.ar(in, 2);
             var b0, b1, b2, b3, b4;
             var lowSig, midSig, highSig;
@@ -49,7 +49,7 @@ Engine_MemoryPhysics : CroneEngine {
             midSig = (b1 + b2 + b3) * midGain;
             highSig = b4 * highGain;
 
-            Out.ar(out, lowSig + midSig + highSig);
+            Out.ar(out, (lowSig + midSig + highSig) * amp);
         }).add;
 
         // ==========================================
@@ -58,9 +58,8 @@ Engine_MemoryPhysics : CroneEngine {
         SynthDef(\FX_Router, { arg in, out, fx_type=0, p1=0.5, p2=0.5, p3=0.5;
             var sig = In.ar(in, 2);
             var mixedSig;
-            var monoDry = sig[0] + sig[1] * 0.5; // Downmix for mono-in effects
+            var monoDry = sig[0] + sig[1] * 0.5; 
             
-            // Effect 1: ABYSS (p1=depth, p2=shimmer, p3=drift)
             var abyss = {
                 var shimmerLoop = LocalIn.ar(1) + monoDry;
                 var wetAbyss;
@@ -73,7 +72,6 @@ Engine_MemoryPhysics : CroneEngine {
                 XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (p1 * 2) - 1);
             }.value;
 
-            // Effect 2: SHATTER (p1=density, p2=chaos, p3=age)
             var shatter = {
                 var fb = LocalIn.ar(1) + monoDry;
                 var clock = LFNoise0.kr(2 + (p1 * 18));
@@ -83,10 +81,9 @@ Engine_MemoryPhysics : CroneEngine {
                 wetShatter = LPF.ar(wetShatter, 10000 - (p3 * 8000));
                 wetShatter = HPF.ar(wetShatter, 40 + (p3 * 400));
                 LocalOut.ar(wetShatter * (0.6 + (p2 * 0.25)));
-                XFade2.ar(sig, wetShatter ! 2, (p2 * 2) - 1); // p2 (chaos) acts as mix here to simplify
+                XFade2.ar(sig, wetShatter ! 2, (p2 * 2) - 1); 
             }.value;
 
-            // Effect 3: BREEZE (p1=flutter, p2=space, p3=mix)
             var breeze = {
                 var chorused = DelayC.ar(monoDry, 0.2, SinOsc.kr(0.5 + (p1 * 2.0)).range(0.005, 0.01 + (p1 * 0.02)));
                 var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (p1 * 400)), 1.0, 0.7 + (p2 * 0.29), 0.1);
@@ -94,7 +91,6 @@ Engine_MemoryPhysics : CroneEngine {
                 XFade2.ar(sig, wetBreeze, (p3 * 2) - 1);
             }.value;
 
-            // Effect 4: CRACKLE (p1=spark, p2=tension, p3=mix)
             var crackle = {
                 var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (p1 * 12)), Dust.ar(10 + (p1 * 20))]), 0.001, 0.03);
                 var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - p2) * 0.05), 0.5 + (p2 * 1.5));
@@ -102,21 +98,25 @@ Engine_MemoryPhysics : CroneEngine {
                 XFade2.ar(sig, wetCrackle, (p3 * 2) - 1);
             }.value;
 
-            // Select the active effect
             mixedSig = Select.ar(fx_type, [sig, abyss, shatter, breeze, crackle]);
             Out.ar(out, mixedSig);
         }).add;
 
-        // Ensure nodes are instantiated on the server after compilation
         context.server.sync;
 
-        // Instantiate FX and EQ at the tail of the chain
         fxSynth = Synth.tail(context.server, \FX_Router, [\in, fxBus, \out, eqBus]);
         eqSynth = Synth.tail(context.server, \MasterEQ, [\in, eqBus, \out, context.out_b.index]);
 
         // ==========================================
         // 3. LUA COMMANDS
         // ==========================================
+        
+        // ADDED: Main Volume command to catch Lua's params:delta("main_vol", d)
+        this.addCommand(\main_vol, "f", { arg msg; eqSynth.set(\amp, msg[1]); });
+        
+        // ADDED: Dummy command to prevent a crash if you press Shift+Key3 before building the layer logic
+        this.addCommand(\erode_layer, "", { "Erode layer called".postln; });
+
         this.addCommand(\select_fx, "i", { arg msg; fxSynth.set(\fx_type, msg[1]); });
         this.addCommand(\set_fx_p1, "f", { arg msg; fxSynth.set(\p1, msg[1]); });
         this.addCommand(\set_fx_p2, "f", { arg msg; fxSynth.set(\p2, msg[1]); });
@@ -126,7 +126,6 @@ Engine_MemoryPhysics : CroneEngine {
         this.addCommand(\set_eq_mid, "f", { arg msg; eqSynth.set(\midGain, msg[1]); });
         this.addCommand(\set_eq_high, "f", { arg msg; eqSynth.set(\highGain, msg[1]); });
 
-        // (Placeholder for your OSC forwarding from original script)
         ampForwarder = OSCFunc({ arg msg; luaAddr.sendMsg('/in_amp', msg[3]); }, '/in_amp', context.server.addr).fix;
     }
 
@@ -136,6 +135,5 @@ Engine_MemoryPhysics : CroneEngine {
         fxSynth.free;
         eqSynth.free;
         ampForwarder.free;
-        // Clean up other resources
     }
 }
