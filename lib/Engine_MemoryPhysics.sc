@@ -56,49 +56,53 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, In.ar(in, 2));
 		}).add;
 
-		// STABILITY FIX & BALANCED VOLUME: Abyss
-		SynthDef(\FX_Abyss, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
-			var sig = In.ar(in, 2);
+		// ULTIMATE STABILITY: Abyss with decoupled modulation & NaN Firewall
+	SynthDef(\FX_Abyss, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
+		var sig = In.ar(in, 2);
+		
+		// Anti-denormal noise floor
+		var monoDry = (sig.sum * 0.5) + WhiteNoise.ar(1e-8); 
+		
+		// Decouple parameter 1: fast for LPF/XFade, slow for sensitive Allpass feedback stability
+		var sp1_fast = Lag.kr(p1, 0.05); 
+		var sp1_slow = Lag.kr(p1, 0.8);  
+		var sp2 = Lag.kr(p2, 0.05);
+		var sp3 = Lag.kr(p3, 0.05);
+		var shimmerLoop = LocalIn.ar(1) + monoDry;
+		var wetAbyss;
+
+		shimmerLoop = PitchShift.ar(shimmerLoop, 0.1, 2.0, 0.001, 0.001);
+		shimmerLoop = LPF.ar(shimmerLoop, 8000);
+		
+		shimmerLoop = LeakDC.ar(shimmerLoop);
+		shimmerLoop = shimmerLoop.tanh;
+		LocalOut.ar(shimmerLoop * (sp2 * 0.85));
+
+		wetAbyss = (monoDry + (shimmerLoop * sp2)) * 0.4;
+
+		8.do {
+			var badFirewall;
+			wetAbyss = AllpassC.ar(
+				wetAbyss, 
+				0.1, 
+				LFNoise2.kr(0.1 + (sp3 * 0.5)).range(0.01, 0.05 + (sp3 * 0.04)), 
+				1.0 + (sp1_slow * 5.0) // Kept silky smooth to prevent coefficient explosions
+			);
 			
-			// Inject anti-denormal noise floor to insulate PitchShift against silent NaN calculations
-			var monoDry = (sig.sum * 0.5) + WhiteNoise.ar(1e-8); 
-			
-			var sp1 = Lag.kr(p1, 0.05);
-			var sp2 = Lag.kr(p2, 0.05);
-			var sp3 = Lag.kr(p3, 0.05);
-			var shimmerLoop = LocalIn.ar(1) + monoDry;
-			var wetAbyss;
+			// SURGICAL FIREWALL: Catch NaNs/Infs inside the loop block and instantly drop them to 0
+			badFirewall = CheckBadValues.ar(wetAbyss, mode: 0, post: 0);
+			wetAbyss = Select.ar(badFirewall.min(1), [wetAbyss, DC.ar(0.0)]);
+		};
 
-			shimmerLoop = PitchShift.ar(shimmerLoop, 0.1, 2.0, 0.001, 0.001);
-			shimmerLoop = LPF.ar(shimmerLoop, 8000);
-			
-			shimmerLoop = LeakDC.ar(shimmerLoop);
-			shimmerLoop = shimmerLoop.tanh;
-			LocalOut.ar(shimmerLoop * (sp2 * 0.85));
+		// The actual low pass filter still dances perfectly to the fast sequencer rhythm
+		wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
+		
+		wetAbyss = wetAbyss.tanh; 
+		wetAbyss = Limiter.ar(wetAbyss, 0.95, 0.01);
+		wetAbyss = wetAbyss * 0.7;
 
-			// Scale back input amplitude to prevent Allpass chain overflow
-			wetAbyss = (monoDry + (shimmerLoop * sp2)) * 0.4;
-
-			8.do {
-				wetAbyss = AllpassC.ar(
-					wetAbyss, 
-					0.1, 
-					LFNoise2.kr(0.1 + (sp3 * 0.5)).range(0.01, 0.05 + (sp3 * 0.04)), 
-					1.0 + (sp1 * 5.0)
-				);
-			};
-
-			wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1 * 8000));
-			
-			// Catch ringing phase accumulations before hitting the limiter
-			wetAbyss = wetAbyss.tanh; 
-			wetAbyss = Limiter.ar(wetAbyss, 0.95, 0.01);
-
-			// Balanced attenuation to match bypass levels
-			wetAbyss = wetAbyss * 0.7;
-
-			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1 * 2) - 1));
-		}).add;
+		Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
+	}).add;
 
 		// BALANCED VOLUME: Shatter
 		SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
