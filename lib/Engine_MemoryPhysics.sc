@@ -141,16 +141,21 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp3 = Lag.kr(p3, 0.05);
 			var monoDry = sig.sum * 0.5;
 			var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (sp1 * 12)), Dust.ar(10 + (sp1 * 20))]), 0.001, 0.03);
-			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.5 + (sp2 * 1.5));
+			
+			// TUNING: Reduced the feedback multiplier (0.5 + (sp2 * 1.5)) to (0.2 + (sp2 * 1.0))
+			// to kill the excessive ringing/pinging.
+			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.2 + (sp2 * 1.0));
 			var wetCrackle; 
 			
 			echo = Select.ar(CheckBadValues.ar(echo, id: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
 			
-			// THICKER BODY: Lowered HPF from 1500 to 1000 so the crackle has more audible weight
+			// TUNING: Added LPF here to dull the pings before they reach the output
+			echo = LPF.ar(echo, 5000); 
+			
 			wetCrackle = HPF.ar(echo, 1000) ! 2;
 			
-			// HYPER COMPRESSION: Harder pre-saturation to catch resonant spikes, then massive limiter drive
-			wetCrackle = (wetCrackle * 2.5).tanh;
+			// TUNING: Reduced gain drive from 2.5 to 1.8 to prevent hard-clipping resonances
+			wetCrackle = (wetCrackle * 1.8).tanh;
 			wetCrackle = Limiter.ar(wetCrackle * 5.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
