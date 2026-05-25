@@ -1,7 +1,7 @@
 // lib/Engine_MemoryPhysics.sc
 Engine_MemoryPhysics : CroneEngine {
 	var <buffers, <synths, <recSynth, <maxLayers = 6;
-	var <recBuffer, <volBus;
+	var <recBuffer, <volBus, <tempoBus;
 	var <fxBus, <eqBus, <fxSynth, <eqSynth;
 
 	*new { arg context, doneCallback;
@@ -15,6 +15,10 @@ Engine_MemoryPhysics : CroneEngine {
 		});
 		recBuffer = Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
 		volBus = Bus.control(context.server, 1).set(1.0);
+		
+		// NEW: Tempo Bus initialized to 120 BPM (2.0 Beats Per Second)
+		tempoBus = Bus.control(context.server, 1).set(2.0); 
+		
 		fxBus = Bus.audio(context.server, 2);
 		eqBus = Bus.audio(context.server, 2);
 
@@ -127,8 +131,6 @@ Engine_MemoryPhysics : CroneEngine {
 			var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (sp1 * 400)), 1.0, 0.7 + (sp2 * 0.29), 0.1);
 			
 			wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (sp1 * 0.2)));
-			
-			// HYPER COMPRESSION: Pushing from 2.8x up to 5.0x drive into the limiter
 			wetBreeze = Limiter.ar(wetBreeze * 5.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
@@ -141,8 +143,6 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp3 = Lag.kr(p3, 0.05);
 			var monoDry = sig.sum * 0.5;
 			
-			// TUNING: Rhythmic Probability
-			// We use .ar for the Dust and ensure the comparison output is converted to audio rate
 			var probability = (sp1 * 0.8) + 0.2; 
 			var trigger = K2A.ar(Dust.kr(20) > (1.0 - probability));
 			var rhythm = Decay2.ar(trigger, 0.001, 0.03);
@@ -158,6 +158,47 @@ Engine_MemoryPhysics : CroneEngine {
 			wetCrackle = Limiter.ar(wetCrackle * 5.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
+		}).add;
+
+		// NEW: FX_Pulse Ducking/Sidechain Effect
+		SynthDef(\FX_Pulse, { arg in, out, p1=0.5, p2=0.5, p3=0.5, bpmBus;
+			var sig = In.ar(in, 2);
+			var sp1 = Lag.kr(p1, 0.05);
+			var sp2 = Lag.kr(p2, 0.05);
+			var sp3 = Lag.kr(p3, 0.05);
+
+			// Read BPM from bus and safety clamp to avoid division by zero
+			var bps = In.kr(bpmBus, 1).max(0.1); 
+			
+			// Map p1 strictly to subdivisions: Whole, Half, Quarter, Eighth, Sixteenth, 32nd
+			var multIdx = (sp1 * 5).round;
+			var mult = Select.kr(multIdx, [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]);
+			var freq = bps * mult;
+			var cycle = 1.0 / freq;
+			
+			var trg = Impulse.ar(freq);
+
+			// Shape 1: Smooth Tremolo swell
+			var smoothEnv = EnvGen.ar(Env([1, 0, 1], [0.5, 0.5], [\sin, \sin]), trg, timeScale: cycle);
+			
+			// Shape 2: Hard Sidechain Pump (Drops instantly, recovers exponentially)
+			var pumpEnv = EnvGen.ar(Env([1, 0, 1], [0.02, 0.98], [\lin, 4]), trg, timeScale: cycle);
+
+			// Blend shapes based on p2
+			var duckCurve = SelectX.ar(sp2, [smoothEnv, pumpEnv]);
+
+			// Depth calculation: gets deeper as p2 increases
+			var depth = 0.6 + (sp2 * 0.4); 
+			var duckedSig = sig * (1.0 - (depth * (1.0 - duckCurve)));
+
+			// Sweeping low-pass filter linked to the pump envelope at high p2
+			var sweepFilter = LPF.ar(duckedSig, 800 + (duckCurve * 14000));
+			var wetPulse = SelectX.ar(sp2, [duckedSig, sweepFilter]);
+
+			// Gain stage to compensate for ducked energy
+			wetPulse = Limiter.ar(wetPulse * 1.6, 0.95, 0.01);
+
+			Out.ar(out, XFade2.ar(sig, wetPulse, (sp3 * 2) - 1));
 		}).add;
 
 		// --- 3. Sync and Instantiate ---
@@ -191,6 +232,9 @@ Engine_MemoryPhysics : CroneEngine {
 		this.addCommand(\clear_layers, "", { buffers.do(_.zero); });
 		this.addCommand(\set_volume, "f", { arg msg; volBus.set(msg[1]); });
 		
+		// NEW: Tell SuperCollider what the norns tempo is (received in BPM)
+		this.addCommand(\set_bpm, "f", { arg msg; tempoBus.set(msg[1] / 60.0); });
+
 		this.addCommand(\record_start, "", {
 			recBuffer.zero;
 			recSynth = Synth(\SurfaceRecorder, [\buf, recBuffer, \in, context.in_b[0].index], context.xg);
@@ -204,9 +248,11 @@ Engine_MemoryPhysics : CroneEngine {
 
 		this.addCommand(\select_fx, "i", { arg msg;
 			var fx_type = msg[1];
-			var defs = [\FX_Bypass, \FX_Abyss, \FX_Shatter, \FX_Breeze, \FX_Crackle];
+			// NEW: Appended \FX_Pulse to the end of the array (Index 5)
+			var defs = [\FX_Bypass, \FX_Abyss, \FX_Shatter, \FX_Breeze, \FX_Crackle, \FX_Pulse];
 			fxSynth.free;
-			fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus, \out, eqBus]);
+			// NEW: We pass bpmBus to every FX. The ones that don't need it will safely ignore it.
+			fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus, \out, eqBus, \bpmBus, tempoBus.index]);
 		});
 
 		this.addCommand(\set_fx_p1, "f", { arg msg; fxSynth.set(\p1, msg[1]); });
@@ -217,6 +263,7 @@ Engine_MemoryPhysics : CroneEngine {
 	free {
 		fxBus.free;
 		eqBus.free;
+		tempoBus.free;
 		fxSynth.free;
 		eqSynth.free;
 	}
