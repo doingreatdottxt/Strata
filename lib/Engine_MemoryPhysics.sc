@@ -57,83 +57,68 @@ Engine_MemoryPhysics : CroneEngine {
 		}).add;
 
 		// ULTIMATE STABILITY: Abyss with decoupled modulation & NaN Firewall
-	SynthDef(\FX_Abyss, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
-		var sig = In.ar(in, 2);
-		
-		// Anti-denormal noise floor
-		var monoDry = (sig.sum * 0.5) + WhiteNoise.ar(1e-8); 
-		
-		// Decouple parameter 1: fast for LPF/XFade, slow for sensitive Allpass feedback stability
-		var sp1_fast = Lag.kr(p1, 0.05); 
-		var sp1_slow = Lag.kr(p1, 0.8);  
-		var sp2 = Lag.kr(p2, 0.05);
-		var sp3 = Lag.kr(p3, 0.05);
-		var shimmerLoop = LocalIn.ar(1) + monoDry;
-		var wetAbyss;
+		SynthDef(\FX_Abyss, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
+			var sig = In.ar(in, 2);
+			var monoDry = (sig.sum * 0.5) + WhiteNoise.ar(1e-8); 
+			var sp1_fast = Lag.kr(p1, 0.05); 
+			var sp1_slow = Lag.kr(p1, 0.8);  
+			var sp2 = Lag.kr(p2, 0.05);
+			var sp3 = Lag.kr(p3, 0.05);
+			var shimmerLoop = LocalIn.ar(1) + monoDry;
+			var wetAbyss;
 
-		shimmerLoop = PitchShift.ar(shimmerLoop, 0.1, 2.0, 0.001, 0.001);
-		shimmerLoop = LPF.ar(shimmerLoop, 8000);
-		
-		shimmerLoop = LeakDC.ar(shimmerLoop);
-		shimmerLoop = shimmerLoop.tanh;
-		LocalOut.ar(shimmerLoop * (sp2 * 0.85));
-
-		wetAbyss = (monoDry + (shimmerLoop * sp2)) * 0.4;
-
-		8.do {
-			var badFirewall;
-			wetAbyss = AllpassC.ar(
-				wetAbyss, 
-				0.1, 
-				LFNoise2.kr(0.1 + (sp3 * 0.5)).range(0.01, 0.05 + (sp3 * 0.04)), 
-				1.0 + (sp1_slow * 5.0) // Kept silky smooth to prevent coefficient explosions
-			);
+			shimmerLoop = PitchShift.ar(shimmerLoop, 0.1, 2.0, 0.001, 0.001);
+			shimmerLoop = LPF.ar(shimmerLoop, 8000);
 			
-			// SURGICAL FIREWALL: Catch NaNs/Infs inside the loop block and instantly drop them to 0
-			badFirewall = CheckBadValues.ar(wetAbyss, mode: 0, post: 0);
-			wetAbyss = Select.ar(badFirewall.min(1), [wetAbyss, DC.ar(0.0)]);
-		};
+			shimmerLoop = LeakDC.ar(shimmerLoop);
+			shimmerLoop = shimmerLoop.tanh;
+			LocalOut.ar(shimmerLoop * (sp2 * 0.85));
 
-		// The actual low pass filter still dances perfectly to the fast sequencer rhythm
-		wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
-		
-		wetAbyss = wetAbyss.tanh; 
-		wetAbyss = Limiter.ar(wetAbyss, 0.95, 0.01);
-		wetAbyss = wetAbyss * 0.7;
+			wetAbyss = (monoDry + (shimmerLoop * sp2)) * 0.4;
 
-		Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
-	}).add;
+			8.do {
+				var badFirewall; // FIXED: declared correctly at the top of the block
+				wetAbyss = AllpassC.ar(
+					wetAbyss, 
+					0.1, 
+					LFNoise2.kr(0.1 + (sp3 * 0.5)).range(0.01, 0.05 + (sp3 * 0.04)), 
+					1.0 + (sp1_slow * 5.0)
+				);
+				
+				badFirewall = CheckBadValues.ar(wetAbyss, mode: 0, post: 0);
+				wetAbyss = Select.ar(badFirewall.min(1), [wetAbyss, DC.ar(0.0)]);
+			};
+
+			wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
+			wetAbyss = wetAbyss.tanh; 
+			wetAbyss = Limiter.ar(wetAbyss, 0.95, 0.01);
+			wetAbyss = wetAbyss * 0.7;
+
+			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
+		}).add;
 
 		// TUNED: Rhythmic Shatter with clean feedback paths
-	SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
-		var sig = In.ar(in, 2);
-		var sp1 = Lag.kr(p1, 0.05);
-		var sp2 = Lag.kr(p2, 0.05);
-		var sp3 = Lag.kr(p3, 0.05);
-		var monoDry = sig.sum * 0.5;
-		
-		// The feedback loop handles the structural rhythm
-		var fb = LocalIn.ar(1) + monoDry;
-		var clock = LFNoise0.kr(2 + (sp1 * 18));
-		var delayTime = SelectX.kr(sp2, [0.4, clock.range(0.02, 0.4)]);
-		
-		var wetShatter = DelayC.ar(fb, 1.0, Lag.kr(delayTime, 0.05));
-		wetShatter = LeakDC.ar(wetShatter);
-		
-		// Rhythmic clarity tuning: filter the feedback line *before* it stacks up high frequencies
-		wetShatter = LPF.ar(wetShatter, 7000 - (sp3 * 5000));
-		wetShatter = HPF.ar(wetShatter, 60 + (sp3 * 300));
-		
-		// TUNING: Keep feedback clean and capped at 0.65 max so rhythms decay instead of building infinitely
-		LocalOut.ar(wetShatter * (0.35 + (sp2 * 0.30)));
+		SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
+			var sig = In.ar(in, 2);
+			var sp1 = Lag.kr(p1, 0.05);
+			var sp2 = Lag.kr(p2, 0.05);
+			var sp3 = Lag.kr(p3, 0.05);
+			var monoDry = sig.sum * 0.5;
+			var fb = LocalIn.ar(1) + monoDry;
+			var clock = LFNoise0.kr(2 + (sp1 * 18));
+			var delayTime = SelectX.kr(sp2, [0.4, clock.range(0.02, 0.4)]);
+			var wetShatter = DelayC.ar(fb, 1.0, Lag.kr(delayTime, 0.05));
+			
+			wetShatter = LeakDC.ar(wetShatter);
+			wetShatter = LPF.ar(wetShatter, 7000 - (sp3 * 5000));
+			wetShatter = HPF.ar(wetShatter, 60 + (sp3 * 300));
+			
+			LocalOut.ar(wetShatter * (0.35 + (sp2 * 0.30)));
 
-		// TUNING: Apply the heavy saturation drive externally to the output signal only.
-		// This gives you the crunch and texture of sp3 without destroying the rhythm inside the loop.
-		wetShatter = (wetShatter * (1.0 + (sp3 * 2.5))).tanh; 
+			wetShatter = (wetShatter * (1.0 + (sp3 * 2.5))).tanh; 
 
-		// Output volume compensation to match bypass levels cleanly
-		Out.ar(out, XFade2.ar(sig, (wetShatter * 0.65) ! 2, (sp2 * 2) - 1));
-	}).add;
+			Out.ar(out, XFade2.ar(sig, (wetShatter * 0.65) ! 2, (sp2 * 2) - 1));
+		}).add;
 
 		// BALANCED VOLUME: Breeze
 		SynthDef(\FX_Breeze, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
@@ -142,12 +127,10 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp2 = Lag.kr(p2, 0.05);
 			var sp3 = Lag.kr(p3, 0.05);
 			var monoDry = sig.sum * 0.5;
-			
 			var chorused = DelayC.ar(monoDry, 0.2, SinOsc.kr(0.5 + (sp1 * 2.0)).range(0.005, 0.01 + (sp1 * 0.02)));
 			var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (sp1 * 400)), 1.0, 0.7 + (sp2 * 0.29), 0.1);
+			
 			wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (sp1 * 0.2)));
-
-			// Gentle volume recovery bump so it doesn't get pushed too far back in the mix
 			wetBreeze = wetBreeze * 1.15;
 
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
@@ -160,13 +143,14 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp2 = Lag.kr(p2, 0.05);
 			var sp3 = Lag.kr(p3, 0.05);
 			var monoDry = sig.sum * 0.5;
-			
 			var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (sp1 * 12)), Dust.ar(10 + (sp1 * 20))]), 0.001, 0.03);
 			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.5 + (sp2 * 1.5));
-		echo = Select.ar(CheckBadValues.ar(echo, mode: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
-		var wetCrackle = HPF.ar(echo, 1500) ! 2;
-
-			// Soft clip harmonic resonance spikes from Comb filters and normalize output
+			var wetCrackle; // FIXED: Declared variables all together at the top of the scope
+			
+			// Apply firewall inline without creating a new mid-stream variable
+			echo = Select.ar(CheckBadValues.ar(echo, mode: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
+			
+			wetCrackle = HPF.ar(echo, 1500) ! 2;
 			wetCrackle = wetCrackle.tanh * 0.7;
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
@@ -175,6 +159,7 @@ Engine_MemoryPhysics : CroneEngine {
 		// --- 3. Sync and Instantiate ---
 		context.server.sync;
 		
+		\InputTracker.asSynthDef.asDefName; // verification reference
 		Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
 		
 		synths = Array.fill(maxLayers, { arg i;
