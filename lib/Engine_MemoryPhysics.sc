@@ -48,12 +48,19 @@ Engine_MemoryPhysics : CroneEngine {
 
 		SynthDef(\MasterEQ, { arg in, out, lowGain=1.0, midGain=1.0, highGain=1.0, amp=0.8;
 			var sig = In.ar(in, 2);
-			var b0 = LPF.ar(sig, 80);
-			var b1 = BPF.ar(sig, 250, 1.0);
-			var b2 = BPF.ar(sig, 1000, 1.0);
-			var b3 = BPF.ar(sig, 4000, 1.0);
-			var b4 = HPF.ar(sig, 8000);
-			Out.ar(out, ((b0*lowGain) + ((b1+b2+b3)*midGain) + (b4*highGain)) * amp);
+			
+			// Convert Lua's linear gain (0.0 to 2.0) into Decibels.
+			// max(0.01) creates a -40dB kill switch when an encoder is at 0.
+			var lowDb = lowGain.max(0.01).ampdb;
+			var midDb = midGain.max(0.01).ampdb;
+			var highDb = highGain.max(0.01).ampdb;
+			
+			// True 3-Band Parametric EQ
+			sig = BLowShelf.ar(sig, freq: 300, rs: 1.0, db: lowDb);
+			sig = BPeakEQ.ar(sig, freq: 1200, rq: 1.2, db: midDb);
+			sig = BHiShelf.ar(sig, freq: 3500, rs: 1.0, db: highDb);
+			
+			Out.ar(out, sig * amp);
 		}).add;
 
 		SynthDef(\FX_Bypass, { arg in, out;
