@@ -104,28 +104,36 @@ Engine_MemoryPhysics : CroneEngine {
 		Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
 	}).add;
 
-		// BALANCED VOLUME: Shatter
-		SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
-			var sig = In.ar(in, 2);
-			var sp1 = Lag.kr(p1, 0.05);
-			var sp2 = Lag.kr(p2, 0.05);
-			var sp3 = Lag.kr(p3, 0.05);
-			var monoDry = sig.sum * 0.5;
-			var fb = LocalIn.ar(1) + monoDry;
-			var clock = LFNoise0.kr(2 + (sp1 * 18));
-			var delayTime = SelectX.kr(sp2, [0.4, clock.range(0.02, 0.4)]);
-			
-			var wetShatter = DelayC.ar(fb, 1.0, Lag.kr(delayTime, 0.05));
-			wetShatter = LeakDC.ar(wetShatter);
-			wetShatter = (wetShatter * (1.0 + (sp3 * 4.0))).tanh; 
-			
-			wetShatter = LPF.ar(wetShatter, 10000 - (sp3 * 8000));
-			wetShatter = HPF.ar(wetShatter, 40 + (sp3 * 400));
-			LocalOut.ar(wetShatter * (0.6 + (sp2 * 0.25)));
+		// TUNED: Rhythmic Shatter with clean feedback paths
+	SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
+		var sig = In.ar(in, 2);
+		var sp1 = Lag.kr(p1, 0.05);
+		var sp2 = Lag.kr(p2, 0.05);
+		var sp3 = Lag.kr(p3, 0.05);
+		var monoDry = sig.sum * 0.5;
+		
+		// The feedback loop handles the structural rhythm
+		var fb = LocalIn.ar(1) + monoDry;
+		var clock = LFNoise0.kr(2 + (sp1 * 18));
+		var delayTime = SelectX.kr(sp2, [0.4, clock.range(0.02, 0.4)]);
+		
+		var wetShatter = DelayC.ar(fb, 1.0, Lag.kr(delayTime, 0.05));
+		wetShatter = LeakDC.ar(wetShatter);
+		
+		// Rhythmic clarity tuning: filter the feedback line *before* it stacks up high frequencies
+		wetShatter = LPF.ar(wetShatter, 7000 - (sp3 * 5000));
+		wetShatter = HPF.ar(wetShatter, 60 + (sp3 * 300));
+		
+		// TUNING: Keep feedback clean and capped at 0.65 max so rhythms decay instead of building infinitely
+		LocalOut.ar(wetShatter * (0.35 + (sp2 * 0.30)));
 
-			// Attenuate dense, square-like RMS waveforms resulting from heavy .tanh saturation
-			Out.ar(out, XFade2.ar(sig, (wetShatter * 0.6) ! 2, (sp2 * 2) - 1));
-		}).add;
+		// TUNING: Apply the heavy saturation drive externally to the output signal only.
+		// This gives you the crunch and texture of sp3 without destroying the rhythm inside the loop.
+		wetShatter = (wetShatter * (1.0 + (sp3 * 2.5))).tanh; 
+
+		// Output volume compensation to match bypass levels cleanly
+		Out.ar(out, XFade2.ar(sig, (wetShatter * 0.65) ! 2, (sp2 * 2) - 1));
+	}).add;
 
 		// BALANCED VOLUME: Breeze
 		SynthDef(\FX_Breeze, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
