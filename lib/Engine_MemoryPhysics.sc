@@ -128,8 +128,8 @@ Engine_MemoryPhysics : CroneEngine {
 			
 			wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (sp1 * 0.2)));
 			
-			// MAX RMS PUSH: Drive the reverb tail hard into a fast limiter to compensate for diffusion loss
-			wetBreeze = Limiter.ar(wetBreeze * 2.8, 0.95, 0.01);
+			// HYPER COMPRESSION: Pushing from 2.8x up to 5.0x drive into the limiter
+			wetBreeze = Limiter.ar(wetBreeze * 5.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
 		}).add;
@@ -145,12 +145,13 @@ Engine_MemoryPhysics : CroneEngine {
 			var wetCrackle; 
 			
 			echo = Select.ar(CheckBadValues.ar(echo, id: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
-			wetCrackle = HPF.ar(echo, 1500) ! 2;
 			
-			// MAX RMS PUSH: Sparse rhythms drop the volume floor massively. 
-			// We soft-clip the sharpest peaks, then drive up to 300% gain into a brickwall limiter.
-			wetCrackle = (wetCrackle * 1.5).tanh;
-			wetCrackle = Limiter.ar(wetCrackle * 3.0, 0.95, 0.01);
+			// THICKER BODY: Lowered HPF from 1500 to 1000 so the crackle has more audible weight
+			wetCrackle = HPF.ar(echo, 1000) ! 2;
+			
+			// HYPER COMPRESSION: Harder pre-saturation to catch resonant spikes, then massive limiter drive
+			wetCrackle = (wetCrackle * 2.5).tanh;
+			wetCrackle = Limiter.ar(wetCrackle * 5.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
 		}).add;
