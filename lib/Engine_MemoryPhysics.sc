@@ -142,10 +142,9 @@ Engine_MemoryPhysics : CroneEngine {
 			var monoDry = sig.sum * 0.5;
 			
 			// TUNING: Rhythmic Probability
-			// sp1 maps from 0.2 (low) to 1.0 (high). 
-			// We compare a random value to the probability threshold.
+			// We use .ar for the Dust and ensure the comparison output is converted to audio rate
 			var probability = (sp1 * 0.8) + 0.2; 
-			var trigger = Dust.kr(20) > (1.0 - probability);
+			var trigger = K2A.ar(Dust.kr(20) > (1.0 - probability));
 			var rhythm = Decay2.ar(trigger, 0.001, 0.03);
 			
 			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.2 + (sp2 * 1.0));
@@ -160,6 +159,7 @@ Engine_MemoryPhysics : CroneEngine {
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
 		}).add;
+
 		// --- 3. Sync and Instantiate ---
 		context.server.sync;
 		
