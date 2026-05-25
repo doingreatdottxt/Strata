@@ -56,7 +56,6 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, In.ar(in, 2));
 		}).add;
 
-		// ULTIMATE STABILITY: Abyss with decoupled modulation & NaN Firewall
 		SynthDef(\FX_Abyss, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
 			var sig = In.ar(in, 2);
 			var monoDry = (sig.sum * 0.5) + WhiteNoise.ar(1e-8); 
@@ -77,7 +76,7 @@ Engine_MemoryPhysics : CroneEngine {
 			wetAbyss = (monoDry + (shimmerLoop * sp2)) * 0.4;
 
 			8.do {
-				var badFirewall; // FIXED: declared correctly at the top of the block
+				var badFirewall;
 				wetAbyss = AllpassC.ar(
 					wetAbyss, 
 					0.1, 
@@ -85,7 +84,8 @@ Engine_MemoryPhysics : CroneEngine {
 					1.0 + (sp1_slow * 5.0)
 				);
 				
-				badFirewall = CheckBadValues.ar(wetAbyss, mode: 0, post: 0);
+				// FIXED: id: 0 instead of mode: 0
+				badFirewall = CheckBadValues.ar(wetAbyss, id: 0, post: 0);
 				wetAbyss = Select.ar(badFirewall.min(1), [wetAbyss, DC.ar(0.0)]);
 			};
 
@@ -97,7 +97,6 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
 		}).add;
 
-		// TUNED: Rhythmic Shatter with clean feedback paths
 		SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
 			var sig = In.ar(in, 2);
 			var sp1 = Lag.kr(p1, 0.05);
@@ -120,7 +119,6 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, (wetShatter * 0.65) ! 2, (sp2 * 2) - 1));
 		}).add;
 
-		// BALANCED VOLUME: Breeze
 		SynthDef(\FX_Breeze, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
 			var sig = In.ar(in, 2);
 			var sp1 = Lag.kr(p1, 0.05);
@@ -136,7 +134,6 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
 		}).add;
 
-		// BALANCED VOLUME: Crackle
 		SynthDef(\FX_Crackle, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
 			var sig = In.ar(in, 2);
 			var sp1 = Lag.kr(p1, 0.05);
@@ -145,10 +142,10 @@ Engine_MemoryPhysics : CroneEngine {
 			var monoDry = sig.sum * 0.5;
 			var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (sp1 * 12)), Dust.ar(10 + (sp1 * 20))]), 0.001, 0.03);
 			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.5 + (sp2 * 1.5));
-			var wetCrackle; // FIXED: Declared variables all together at the top of the scope
+			var wetCrackle; 
 			
-			// Apply firewall inline without creating a new mid-stream variable
-			echo = Select.ar(CheckBadValues.ar(echo, mode: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
+			// FIXED: id: 0 instead of mode: 0
+			echo = Select.ar(CheckBadValues.ar(echo, id: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
 			
 			wetCrackle = HPF.ar(echo, 1500) ! 2;
 			wetCrackle = wetCrackle.tanh * 0.7;
@@ -159,7 +156,7 @@ Engine_MemoryPhysics : CroneEngine {
 		// --- 3. Sync and Instantiate ---
 		context.server.sync;
 		
-		\InputTracker.asSynthDef.asDefName; // verification reference
+		// FIXED: Removed the rogue .asSynthDef line that was crashing the boot sequence.
 		Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
 		
 		synths = Array.fill(maxLayers, { arg i;
