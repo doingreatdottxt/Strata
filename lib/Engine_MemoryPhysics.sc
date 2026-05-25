@@ -106,26 +106,43 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
 		}).add;
 
-		SynthDef(\FX_Shatter, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
+		SynthDef(\Shatter, { arg in, out, fx_p1=0.5, fx_p2=0.5, fx_p3=0.5, bpm=60, amp=1.0;
 			var sig = In.ar(in, 2);
-			var sp1 = Lag.kr(p1, 0.05);
-			var sp2 = Lag.kr(p2, 0.05);
-			var sp3 = Lag.kr(p3, 0.05);
-			var monoDry = sig.sum * 0.5;
-			var fb = LocalIn.ar(1) + monoDry;
-			var clock = LFNoise0.kr(2 + (sp1 * 18));
-			var delayTime = SelectX.kr(sp2, [0.4, clock.range(0.02, 0.4)]);
-			var wetShatter = DelayC.ar(fb, 1.0, Lag.kr(delayTime, 0.05));
+			var beatSec = 60.0 / bpm;
 			
-			wetShatter = LeakDC.ar(wetShatter);
-			wetShatter = LPF.ar(wetShatter, 7000 - (sp3 * 5000));
-			wetShatter = HPF.ar(wetShatter, 60 + (sp3 * 300));
+			// 8-second secondary buffer to hold the loop history
+			var maxFrames = SampleRate.ir * 8.0; 
+			var buf = LocalBuf(maxFrames, 2).clear;
 			
-			LocalOut.ar(wetShatter * (0.35 + (sp2 * 0.30)));
-
-			wetShatter = (wetShatter * (1.0 + (sp3 * 2.5))).tanh; 
-
-			Out.ar(out, XFade2.ar(sig, (wetShatter * 0.9) ! 2, (sp2 * 2) - 1));
+			var writePhase = Phasor.ar(0, 1, 0, maxFrames);
+			BufWr.ar(sig, buf, writePhase);
+			
+			// Clock locks to 1/4, 1/2, 1, 2, and 3 beat intervals
+			var trig = TDuty.ar(Drand([0.25, 0.5, 1.0, 2.0, 3.0], inf) * beatSec);
+			
+			// P1: Chaos (Probability of causing a stutter)
+			var jumpProb = TRand.ar(0.0, 1.0, trig) < fx_p1;
+			
+			// Randomly select how far back to jump (in beats)
+			var offsetBeats = Demand.ar(trig, 0, Drand([0.5, 1.0, 1.5, 2.0, 3.0], inf));
+			
+			// P2: Maximum Jump Distance
+			var maxJump = fx_p2.linlin(0, 1, 0.5, 4.0);
+			offsetBeats = offsetBeats.min(maxJump);
+			
+			var frameOffset = offsetBeats * beatSec * SampleRate.ir;
+			var actualOffset = Select.ar(jumpProb, [0, frameOffset]);
+			
+			var readPhase = Wrap.ar(writePhase - actualOffset, 0, maxFrames);
+			var wet = BufRd.ar(2, buf, readPhase, loop: 1, interpolation: 2);
+			
+			// Micro-ducking to prevent zero-crossing clicks when the read head jumps
+			var duck = 1 - EnvGen.ar(Env.perc(0.005, 0.015), trig);
+			wet = wet * duck;
+			
+			// Linear crossfade
+			var output = (sig * (1 - fx_p3)) + (wet * fx_p3);
+			Out.ar(out, output * amp);
 		}).add;
 
 		SynthDef(\FX_Breeze, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
@@ -143,28 +160,46 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
 		}).add;
 
-		SynthDef(\FX_Crackle, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
+		SynthDef(\Crackle, { arg in, out, fx_p1=0.5, fx_p2=0.5, fx_p3=0.5, bpm=60, amp=1.0;
 			var sig = In.ar(in, 2);
-			var sp1 = Lag.kr(p1, 0.05);
-			var sp2 = Lag.kr(p2, 0.05);
-			var sp3 = Lag.kr(p3, 0.05);
-			var monoDry = sig.sum * 0.5;
+			var beatSec = 60.0 / bpm;
 			
-			var probability = (sp1 * 0.8) + 0.2; 
-			var trigger = K2A.ar(Dust.kr(20) > (1.0 - probability));
-			var rhythm = Decay2.ar(trigger, 0.001, 0.03);
+			// 4-second micro-buffer
+			var maxFrames = SampleRate.ir * 4.0; 
+			var buf = LocalBuf(maxFrames, 2).clear;
 			
-			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.2 + (sp2 * 1.0));
-			var wetCrackle; 
+			var writePhase = Phasor.ar(0, 1, 0, maxFrames);
+			BufWr.ar(sig, buf, writePhase);
 			
-			echo = Select.ar(CheckBadValues.ar(echo, id: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
-			echo = LPF.ar(echo, 5000); 
-			wetCrackle = HPF.ar(echo, 1000) ! 2;
+			// Micro-steps: 1/16, 1/8, 3/16, 1/4 beats
+			var trig = TDuty.ar(Drand([0.0625, 0.125, 0.1875, 0.25], inf) * beatSec);
 			
-			wetCrackle = (wetCrackle * 1.8).tanh;
-			wetCrackle = Limiter.ar(wetCrackle * 5.0, 0.95, 0.01);
-
-			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
+			var offsetBeats = Demand.ar(trig, 0, Drand([0, 0.125, 0.25, 0.5, 0.75, 1.0], inf));
+			var frameOffset = offsetBeats * beatSec * SampleRate.ir;
+			
+			// Rates: Normal, Reverse, Double Speed, Reverse Double, Quadruple
+			var rates = Drand([1.0, 1.0, 2.0, -1.0, -2.0, 4.0], inf);
+			var rate = Demand.ar(trig, 0, rates);
+			
+			// P1: Probability of the fragment violently shifting pitch/direction
+			var shiftProb = TRand.ar(0.0, 1.0, trig) < fx_p1;
+			var rateMod = Select.ar(shiftProb, [1.0, rate]);
+			
+			// Anchor the read head exactly where the trigger occurred, then play at rateMod
+			var readAnchor = Wrap.ar(writePhase - frameOffset, 0, maxFrames);
+			var readPhase = Phasor.ar(trig, rateMod, 0, maxFrames, readAnchor);
+			
+			var wet = BufRd.ar(2, buf, readPhase, loop: 1, interpolation: 2);
+			
+			// P2: Choppiness (Audio Gating)
+			// Lower values create tiny splinters of sound. Higher values let fragments bleed.
+			var decayTime = beatSec * 0.25 * fx_p2.linlin(0, 1, 0.05, 1.0);
+			var grainEnv = EnvGen.ar(Env([1, 1, 0], [decayTime * 0.8, decayTime * 0.2]), trig);
+			
+			wet = wet * grainEnv;
+			
+			var output = (sig * (1 - fx_p3)) + (wet * fx_p3);
+			Out.ar(out, output * amp);
 		}).add;
 
 		// NEW: FX_Pulse Ducking/Sidechain Effect
