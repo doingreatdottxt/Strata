@@ -90,9 +90,6 @@ Engine_MemoryPhysics : CroneEngine {
 
 			wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
 			wetAbyss = wetAbyss.tanh; 
-			
-			// GAIN STAGE: Push the signal 40% hotter into the limiter to raise RMS loudness
-			// rather than attenuating it after the fact.
 			wetAbyss = Limiter.ar(wetAbyss * 1.4, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
@@ -117,7 +114,6 @@ Engine_MemoryPhysics : CroneEngine {
 
 			wetShatter = (wetShatter * (1.0 + (sp3 * 2.5))).tanh; 
 
-			// GAIN STAGE: Increased output multiplier from 0.65 to 0.9 to match input energy
 			Out.ar(out, XFade2.ar(sig, (wetShatter * 0.9) ! 2, (sp2 * 2) - 1));
 		}).add;
 
@@ -132,9 +128,8 @@ Engine_MemoryPhysics : CroneEngine {
 			
 			wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (sp1 * 0.2)));
 			
-			// GAIN STAGE: Diffusion spreads energy out over time, causing perceived volume drops.
-			// Bumped makeup gain from 1.15 to 1.6
-			wetBreeze = wetBreeze * 1.6;
+			// MAX RMS PUSH: Drive the reverb tail hard into a fast limiter to compensate for diffusion loss
+			wetBreeze = Limiter.ar(wetBreeze * 2.8, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
 		}).add;
@@ -150,12 +145,12 @@ Engine_MemoryPhysics : CroneEngine {
 			var wetCrackle; 
 			
 			echo = Select.ar(CheckBadValues.ar(echo, id: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
-			
 			wetCrackle = HPF.ar(echo, 1500) ! 2;
 			
-			// GAIN STAGE: The HPF naturally cuts a massive amount of low-end energy. 
-			// Bumped post-saturation gain from 0.7 to 1.3
-			wetCrackle = wetCrackle.tanh * 1.3;
+			// MAX RMS PUSH: Sparse rhythms drop the volume floor massively. 
+			// We soft-clip the sharpest peaks, then drive up to 300% gain into a brickwall limiter.
+			wetCrackle = (wetCrackle * 1.5).tanh;
+			wetCrackle = Limiter.ar(wetCrackle * 3.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
 		}).add;
