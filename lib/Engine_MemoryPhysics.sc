@@ -155,7 +155,8 @@ Engine_MemoryPhysics : CroneEngine {
 			
 			var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (sp1 * 12)), Dust.ar(10 + (sp1 * 20))]), 0.001, 0.03);
 			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.5 + (sp2 * 1.5));
-			var wetCrackle = HPF.ar(echo, 1500) ! 2;
+		echo = Select.ar(CheckBadValues.ar(echo, mode: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
+		var wetCrackle = HPF.ar(echo, 1500) ! 2;
 
 			// Soft clip harmonic resonance spikes from Comb filters and normalize output
 			wetCrackle = wetCrackle.tanh * 0.7;
