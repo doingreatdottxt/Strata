@@ -140,27 +140,26 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp2 = Lag.kr(p2, 0.05);
 			var sp3 = Lag.kr(p3, 0.05);
 			var monoDry = sig.sum * 0.5;
-			var rhythm = Decay2.ar(Mix([Impulse.ar(8 + (sp1 * 12)), Dust.ar(10 + (sp1 * 20))]), 0.001, 0.03);
 			
-			// TUNING: Reduced the feedback multiplier (0.5 + (sp2 * 1.5)) to (0.2 + (sp2 * 1.0))
-			// to kill the excessive ringing/pinging.
+			// TUNING: Rhythmic Probability
+			// sp1 maps from 0.2 (low) to 1.0 (high). 
+			// We compare a random value to the probability threshold.
+			var probability = (sp1 * 0.8) + 0.2; 
+			var trigger = Dust.kr(20) > (1.0 - probability);
+			var rhythm = Decay2.ar(trigger, 0.001, 0.03);
+			
 			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.2 + (sp2 * 1.0));
 			var wetCrackle; 
 			
 			echo = Select.ar(CheckBadValues.ar(echo, id: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
-			
-			// TUNING: Added LPF here to dull the pings before they reach the output
 			echo = LPF.ar(echo, 5000); 
-			
 			wetCrackle = HPF.ar(echo, 1000) ! 2;
 			
-			// TUNING: Reduced gain drive from 2.5 to 1.8 to prevent hard-clipping resonances
 			wetCrackle = (wetCrackle * 1.8).tanh;
 			wetCrackle = Limiter.ar(wetCrackle * 5.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
 		}).add;
-
 		// --- 3. Sync and Instantiate ---
 		context.server.sync;
 		
