@@ -113,9 +113,7 @@ Engine_MemoryPhysics : CroneEngine {
 			// 8-second secondary buffer to hold the loop history
 			var maxFrames = SampleRate.ir * 8.0; 
 			var buf = LocalBuf(maxFrames, 2).clear;
-			
 			var writePhase = Phasor.ar(0, 1, 0, maxFrames);
-			BufWr.ar(sig, buf, writePhase);
 			
 			// Clock locks to 1/4, 1/2, 1, 2, and 3 beat intervals
 			var trig = TDuty.ar(Drand([0.25, 0.5, 1.0, 2.0, 3.0], inf) * beatSec);
@@ -128,20 +126,24 @@ Engine_MemoryPhysics : CroneEngine {
 			
 			// P2: Maximum Jump Distance
 			var maxJump = fx_p2.linlin(0, 1, 0.5, 4.0);
+			var frameOffset, actualOffset, readPhase, wet, duck, output;
+			
 			offsetBeats = offsetBeats.min(maxJump);
+			frameOffset = offsetBeats * beatSec * SampleRate.ir;
+			actualOffset = Select.ar(jumpProb, [0, frameOffset]);
 			
-			var frameOffset = offsetBeats * beatSec * SampleRate.ir;
-			var actualOffset = Select.ar(jumpProb, [0, frameOffset]);
-			
-			var readPhase = Wrap.ar(writePhase - actualOffset, 0, maxFrames);
-			var wet = BufRd.ar(2, buf, readPhase, loop: 1, interpolation: 2);
+			readPhase = Wrap.ar(writePhase - actualOffset, 0, maxFrames);
+			wet = BufRd.ar(2, buf, readPhase, loop: 1, interpolation: 2);
 			
 			// Micro-ducking to prevent zero-crossing clicks when the read head jumps
-			var duck = 1 - EnvGen.ar(Env.perc(0.005, 0.015), trig);
+			duck = 1 - EnvGen.ar(Env.perc(0.005, 0.015), trig);
 			wet = wet * duck;
 			
 			// Linear crossfade
-			var output = (sig * (1 - fx_p3)) + (wet * fx_p3);
+			output = (sig * (1 - fx_p3)) + (wet * fx_p3);
+			
+			// Executable UGens placed safely at the end
+			BufWr.ar(sig, buf, writePhase);
 			Out.ar(out, output * amp);
 		}).add;
 
@@ -167,9 +169,7 @@ Engine_MemoryPhysics : CroneEngine {
 			// 4-second micro-buffer
 			var maxFrames = SampleRate.ir * 4.0; 
 			var buf = LocalBuf(maxFrames, 2).clear;
-			
 			var writePhase = Phasor.ar(0, 1, 0, maxFrames);
-			BufWr.ar(sig, buf, writePhase);
 			
 			// Micro-steps: 1/16, 1/8, 3/16, 1/4 beats
 			var trig = TDuty.ar(Drand([0.0625, 0.125, 0.1875, 0.25], inf) * beatSec);
@@ -188,17 +188,19 @@ Engine_MemoryPhysics : CroneEngine {
 			// Anchor the read head exactly where the trigger occurred, then play at rateMod
 			var readAnchor = Wrap.ar(writePhase - frameOffset, 0, maxFrames);
 			var readPhase = Phasor.ar(trig, rateMod, 0, maxFrames, readAnchor);
-			
 			var wet = BufRd.ar(2, buf, readPhase, loop: 1, interpolation: 2);
 			
 			// P2: Choppiness (Audio Gating)
-			// Lower values create tiny splinters of sound. Higher values let fragments bleed.
-			var decayTime = beatSec * 0.25 * fx_p2.linlin(0, 1, 0.05, 1.0);
-			var grainEnv = EnvGen.ar(Env([1, 1, 0], [decayTime * 0.8, decayTime * 0.2]), trig);
+			var decayTime, grainEnv, output;
+			
+			decayTime = beatSec * 0.25 * fx_p2.linlin(0, 1, 0.05, 1.0);
+			grainEnv = EnvGen.ar(Env([1, 1, 0], [decayTime * 0.8, decayTime * 0.2]), trig);
 			
 			wet = wet * grainEnv;
+			output = (sig * (1 - fx_p3)) + (wet * fx_p3);
 			
-			var output = (sig * (1 - fx_p3)) + (wet * fx_p3);
+			// Executable UGens placed safely at the end
+			BufWr.ar(sig, buf, writePhase);
 			Out.ar(out, output * amp);
 		}).add;
 
