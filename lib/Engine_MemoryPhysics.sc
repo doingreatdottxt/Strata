@@ -84,15 +84,16 @@ Engine_MemoryPhysics : CroneEngine {
 					1.0 + (sp1_slow * 5.0)
 				);
 				
-				// FIXED: id: 0 instead of mode: 0
 				badFirewall = CheckBadValues.ar(wetAbyss, id: 0, post: 0);
 				wetAbyss = Select.ar(badFirewall.min(1), [wetAbyss, DC.ar(0.0)]);
 			};
 
 			wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
 			wetAbyss = wetAbyss.tanh; 
-			wetAbyss = Limiter.ar(wetAbyss, 0.95, 0.01);
-			wetAbyss = wetAbyss * 0.7;
+			
+			// GAIN STAGE: Push the signal 40% hotter into the limiter to raise RMS loudness
+			// rather than attenuating it after the fact.
+			wetAbyss = Limiter.ar(wetAbyss * 1.4, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
 		}).add;
@@ -116,7 +117,8 @@ Engine_MemoryPhysics : CroneEngine {
 
 			wetShatter = (wetShatter * (1.0 + (sp3 * 2.5))).tanh; 
 
-			Out.ar(out, XFade2.ar(sig, (wetShatter * 0.65) ! 2, (sp2 * 2) - 1));
+			// GAIN STAGE: Increased output multiplier from 0.65 to 0.9 to match input energy
+			Out.ar(out, XFade2.ar(sig, (wetShatter * 0.9) ! 2, (sp2 * 2) - 1));
 		}).add;
 
 		SynthDef(\FX_Breeze, { arg in, out, p1=0.5, p2=0.5, p3=0.5;
@@ -129,7 +131,10 @@ Engine_MemoryPhysics : CroneEngine {
 			var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (sp1 * 400)), 1.0, 0.7 + (sp2 * 0.29), 0.1);
 			
 			wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (sp1 * 0.2)));
-			wetBreeze = wetBreeze * 1.15;
+			
+			// GAIN STAGE: Diffusion spreads energy out over time, causing perceived volume drops.
+			// Bumped makeup gain from 1.15 to 1.6
+			wetBreeze = wetBreeze * 1.6;
 
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
 		}).add;
@@ -144,11 +149,13 @@ Engine_MemoryPhysics : CroneEngine {
 			var echo = CombC.ar(monoDry * rhythm, 0.2, 0.01 + ((1.0 - sp2) * 0.05), 0.5 + (sp2 * 1.5));
 			var wetCrackle; 
 			
-			// FIXED: id: 0 instead of mode: 0
 			echo = Select.ar(CheckBadValues.ar(echo, id: 0, post: 0).min(1), [echo, DC.ar(0.0)]);
 			
 			wetCrackle = HPF.ar(echo, 1500) ! 2;
-			wetCrackle = wetCrackle.tanh * 0.7;
+			
+			// GAIN STAGE: The HPF naturally cuts a massive amount of low-end energy. 
+			// Bumped post-saturation gain from 0.7 to 1.3
+			wetCrackle = wetCrackle.tanh * 1.3;
 
 			Out.ar(out, XFade2.ar(sig, wetCrackle, (sp3 * 2) - 1));
 		}).add;
@@ -156,7 +163,6 @@ Engine_MemoryPhysics : CroneEngine {
 		// --- 3. Sync and Instantiate ---
 		context.server.sync;
 		
-		// FIXED: Removed the rogue .asSynthDef line that was crashing the boot sequence.
 		Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
 		
 		synths = Array.fill(maxLayers, { arg i;
