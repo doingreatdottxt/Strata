@@ -27,7 +27,8 @@ local state = {
   current_amp = 0.0,
   last_activity_beat = 0,
   
-  active_fx = 0,
+  -- Effects Engine States
+  active_fx = 0, -- 0: Bypass, 1: Abyss, 2: Shatter, 3: Breeze, 4: Crackle, 5: Pulse
   fx_p1 = 0.5,
   fx_p2 = 0.5,
   fx_p3 = 0.5,
@@ -35,23 +36,26 @@ local state = {
   eq_mid = 1.0,
   eq_high = 1.0,
 
+  -- Background Rhythm Generator States
   seq = {1.0, 0.0, 0.5, 0.0, 1.0, 0.2, 0.0, 0.7, 1.0, 0.0, 0.4, 0.0, 0.8, 0.0, 0.5, 0.0},
   seq_step = 1,
   clock_active = false,
   last_target = 1
 }
 
-local fx_names = {"BYPASS", "ABYSS", "HARMONY", "BREEZE", "CRACKLE", "PULSE"}
+local fx_names = {"BYPASS", "ABYSS", "SHATTER", "BREEZE", "CRACKLE", "PULSE"}
 local layer_phases = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local redraw_metro = nil
 
 function init()
   setup_params()
   
+  -- --- Tempo Sync Integration ---
   engine.set_bpm(clock.get_tempo())
   clock.tempo_change_handler = function(bpm)
     engine.set_bpm(bpm)
   end
+  -- ------------------------------
   
   osc.event = function(path, args, from)
     if path == "/in_amp" then
@@ -120,6 +124,7 @@ function init()
         local mod_value = state.seq[state.seq_step]
         local target = params:get("seq_target")
         
+        -- Restore parameters back to baseline if target is changed or turned OFF
         if target ~= state.last_target then
            engine.set_fx_p1(state.fx_p1)
            engine.set_fx_p2(state.fx_p2)
@@ -186,6 +191,7 @@ function setup_params()
   end)
   
   params:add_group("STRATA RHYTHM GENERATOR", 3)
+  -- Expanded targets to include EQ Bands
   params:add_option("seq_target", "MODULATION TARGET", {"OFF", "FX PARAM 1", "FX PARAM 2", "FX PARAM 3", "EQ LOW", "EQ MID", "EQ HIGH"}, 1)
   params:add_control("seq_density", "RANDOM STEP DENSITY %", controlspec.new(0, 100, 'lin', 1, 50))
   params:add_trigger("seq_randomize", "RANDOMIZE SEQUENCE ARRAY")
@@ -233,6 +239,7 @@ function key(n, z)
   if n == 1 then state.shift_held = (z == 1)
   elseif n == 2 and z == 1 then
     if state.shift_held then
+        -- Updated modulo to 6 to include the new Pulse effect
         state.active_fx = (state.active_fx + 1) % 6
         engine.select_fx(state.active_fx)
         
@@ -320,6 +327,7 @@ function redraw()
   screen.move(128, 64)
   screen.text_right(params:get("sync_mode") == 1 and "FREE" or string.format("%.0f BPM", clock.get_tempo()))
   
+  -- --- NEW UI SYSTEM INJECTED HERE ---
   if state.shift_held then
     screen.level(15)
     screen.move(0, 64)
@@ -332,6 +340,7 @@ function redraw()
     local p3_pct = math.floor(state.fx_p3 * 100)
     screen.text(fx_names[state.active_fx+1] .. " (" .. p1_pct .. "%|" .. p2_pct .. "%|" .. p3_pct .. "%)")
   end
+  -- -----------------------------------
   
   screen.update()
 end
