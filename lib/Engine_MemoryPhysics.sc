@@ -11,12 +11,12 @@ Engine_MemoryPhysics : CroneEngine {
 	alloc {
 		// --- 1. Allocations ---
 		buffers = Array.fill(maxLayers, {
-			Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
+			Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
 		});
-		recBuffer = Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
+		recBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
 		
 		// NEW: Dedicated temp buffer for the high-speed rhythmic shuffler
-		tempBuffer = Buffer.alloc(context.server, context.server.sampleRate * 30.0, 2);
+		tempBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
 		
 		volBus = Bus.control(context.server, 1).set(1.0);
 		tempoBus = Bus.control(context.server, 1).set(2.0); 
@@ -36,7 +36,7 @@ Engine_MemoryPhysics : CroneEngine {
 			
 			vol_target = Select.kr(depth, [1.0, 0.6, 0.3, 0.1, 0.0, 0.0]);
 			layer_vol = VarLag.kr(vol_target, 0.5, warp: \sine);
-			Out.ar(out, sig * layer_vol * In.kr(volBus.index, 1));
+			Out.ar(out, sig * layer_vol * In.kr(out, 1)); // note: out is expected to be a bus index
 		}).add;
 
 		// NEW: 100x Speed Offline Shuffler
@@ -218,14 +218,17 @@ Engine_MemoryPhysics : CroneEngine {
 		// --- 3. Sync and Instantiate ---
 		context.server.sync;
 		
+		// Input tracker: pass bus index
 		Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
 		
+		// instantiate strata layers with numeric buffer/bus ids
 		synths = Array.fill(maxLayers, { arg i;
-			Synth(\StrataLayer, [\buf, buffers[i], \out, fxBus, \depth, i], context.xg);
+			Synth(\StrataLayer, [\buf, buffers[i].bufnum, \out, fxBus.index, \depth, i], context.xg);
 		});
 		
-		fxSynth = Synth.new(\FX_Bypass, [\in, fxBus, \out, eqBus], context.xg, \addToTail);
-		eqSynth = Synth.new(\MasterEQ, [\in, eqBus, \out, context.out_b.index], context.xg, \addToTail);
+		// create fx and eq synths using numeric bus indices
+		fxSynth = Synth.new(\FX_Bypass, [\in, fxBus.index, \out, eqBus.index], context.xg, \addToTail);
+		eqSynth = Synth.new(\MasterEQ, [\in, eqBus.index, \out, context.out_b.index], context.xg, \addToTail);
 
 		// --- 4. Lua API Commands ---
 		this.addCommand(\shift_layers, "ff", { arg msg;
@@ -233,7 +236,7 @@ Engine_MemoryPhysics : CroneEngine {
 			var shiftOffset = msg[2];
 			
 			// 1. Shuffle Layer 0 into the Temp Buffer BEFORE rotating
-			Synth(\FastShuffler, [\srcBuf, buffers[0], \dstBuf, tempBuffer, \dur, dur], context.xg);
+			Synth(\FastShuffler, [\srcBuf, buffers[0].bufnum, \dstBuf, tempBuffer.bufnum, \dur, dur], context.xg);
 			
 			// 2. Standard layer rotation
 			buffers = buffers.rotate(1);
@@ -241,7 +244,8 @@ Engine_MemoryPhysics : CroneEngine {
 			synths.do { arg syn, i; syn.set(\depth, i); };
 			
 			// 3. Record fresh data to the new buffers[0]
-			recBuffer.copyData(buffers[0]);
+			// copy recorded data INTO buffers[0]
+			buffers[0].copyData(recBuffer);
 			synths[0].set(\duration, dur, \t_reset, 1, \shift_offset, shiftOffset);
 			
 			// 4. Destructively overwrite buffers[1] with the shuffled data
@@ -265,33 +269,34 @@ Engine_MemoryPhysics : CroneEngine {
 
 		this.addCommand(\record_start, "", {
 			recBuffer.zero;
-			recSynth = Synth(\SurfaceRecorder, [\buf, recBuffer, \in, context.in_b[0].index], context.xg);
+			recSynth = Synth(\SurfaceRecorder, [\buf, recBuffer.bufnum, \in, context.in_b[0].index], context.xg);
 		});
 
-		this.addCommand(\record_stop, "", { recSynth.free; });
-		this.addCommand(\main_vol, "f", { arg msg; eqSynth.set(\amp, msg[1]); });
-		this.addCommand(\set_eq_low, "f", { arg msg; eqSynth.set(\lowGain, msg[1]); });
-		this.addCommand(\set_eq_mid, "f", { arg msg; eqSynth.set(\midGain, msg[1]); });
-		this.addCommand(\set_eq_high, "f", { arg msg; eqSynth.set(\highGain, msg[1]); });
+		this.addCommand(\record_stop, "", { recSynth.ifNotNil({ recSynth.free }); });
+		this.addCommand(\main_vol, "f", { arg msg; eqSynth.ifNotNil({ eqSynth.set(\amp, msg[1]) }); });
+		this.addCommand(\set_eq_low, "f", { arg msg; eqSynth.ifNotNil({ eqSynth.set(\lowGain, msg[1]) }); });
+		this.addCommand(\set_eq_mid, "f", { arg msg; eqSynth.ifNotNil({ eqSynth.set(\midGain, msg[1]) }); });
+		this.addCommand(\set_eq_high, "f", { arg msg; eqSynth.ifNotNil({ eqSynth.set(\highGain, msg[1]) }); });
 
 		this.addCommand(\select_fx, "i", { arg msg;
 			var fx_type = msg[1];
 			// REPLACED SHATTER WITH HARMONY
 			var defs = [\FX_Bypass, \FX_Abyss, \FX_Harmony, \FX_Breeze, \FX_Crackle, \FX_Pulse];
-			fxSynth.free;
-			fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus, \out, eqBus, \bpmBus, tempoBus.index]);
+			fxSynth.ifNotNil({ fxSynth.free });
+			// pass bus indices and bpm bus index
+			fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus.index, \out, eqBus.index, \bpmBus, tempoBus.index]);
 		});
 
-		this.addCommand(\set_fx_p1, "f", { arg msg; fxSynth.set(\p1, msg[1]); });
-		this.addCommand(\set_fx_p2, "f", { arg msg; fxSynth.set(\p2, msg[1]); });
-		this.addCommand(\set_fx_p3, "f", { arg msg; fxSynth.set(\p3, msg[1]); });
+		this.addCommand(\set_fx_p1, "f", { arg msg; fxSynth.ifNotNil({ fxSynth.set(\p1, msg[1]) }); });
+		this.addCommand(\set_fx_p2, "f", { arg msg; fxSynth.ifNotNil({ fxSynth.set(\p2, msg[1]) }); });
+		this.addCommand(\set_fx_p3, "f", { arg msg; fxSynth.ifNotNil({ fxSynth.set(\p3, msg[1]) }); });
 	}
 
 	free {
-		fxBus.free;
-		eqBus.free;
-		tempoBus.free;
-		fxSynth.free;
-		eqSynth.free;
+		fxBus.ifNotNil({ fxBus.free });
+		eqBus.ifNotNil({ eqBus.free });
+		tempoBus.ifNotNil({ tempoBus.free });
+		fxSynth.ifNotNil({ fxSynth.free });
+		eqSynth.ifNotNil({ eqSynth.free });
 	}
 }
