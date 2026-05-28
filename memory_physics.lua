@@ -28,7 +28,7 @@ local state = {
   last_activity_beat = 0,
   
   -- Effects Engine States
-  active_fx = 0, -- 0: Bypass, 1: Abyss, 2: Shatter, 3: Breeze, 4: Crackle, 5: Pulse
+  active_fx = 0, -- 0: Bypass, 1: Abyss, 2: Harmony, 3: Breeze, 4: Crackle, 5: Pulse
   fx_p1 = 0.5,
   fx_p2 = 0.5,
   fx_p3 = 0.5,
@@ -43,7 +43,8 @@ local state = {
   last_target = 1
 }
 
-local fx_names = {"BYPASS", "ABYSS", "SHATTER", "BREEZE", "CRACKLE", "PULSE"}
+-- Shatter replaced globally with HARMONY
+local fx_names = {"BYPASS", "ABYSS", "HARMONY", "BREEZE", "CRACKLE", "PULSE"}
 local layer_phases = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local redraw_metro = nil
 
@@ -191,7 +192,6 @@ function setup_params()
   end)
   
   params:add_group("STRATA RHYTHM GENERATOR", 3)
-  -- Expanded targets to include EQ Bands
   params:add_option("seq_target", "MODULATION TARGET", {"OFF", "FX PARAM 1", "FX PARAM 2", "FX PARAM 3", "EQ LOW", "EQ MID", "EQ HIGH"}, 1)
   params:add_control("seq_density", "RANDOM STEP DENSITY %", controlspec.new(0, 100, 'lin', 1, 50))
   params:add_trigger("seq_randomize", "RANDOMIZE SEQUENCE ARRAY")
@@ -239,7 +239,7 @@ function key(n, z)
   if n == 1 then state.shift_held = (z == 1)
   elseif n == 2 and z == 1 then
     if state.shift_held then
-        -- Updated modulo to 6 to include the new Pulse effect
+        -- Modulo maps cleanly across all 6 effects (Indexes 0 to 5)
         state.active_fx = (state.active_fx + 1) % 6
         engine.select_fx(state.active_fx)
         
@@ -327,14 +327,20 @@ function redraw()
   screen.move(128, 64)
   screen.text_right(params:get("sync_mode") == 1 and "FREE" or string.format("%.0f BPM", clock.get_tempo()))
   
+  -- Bottom Status HUD with percentage readouts
   if state.shift_held then
     screen.level(15)
     screen.move(0, 64)
-    screen.text(string.format("EQ: H%.1f M%.1f L%.1f", state.eq_high, state.eq_mid, state.eq_low))
+    -- Converts 0.0 - 2.0 EQ linear values to crisp percentages (e.g., 1.0 -> 100%)
+    screen.text(string.format("EQ: H%.0f%% M%.0f%% L%.0f%%", state.eq_high * 100, state.eq_mid * 100, state.eq_low * 100))
   elseif state.active_fx > 0 then
     screen.level(15)
     screen.move(0, 64)
-    screen.text("FX:" .. fx_names[state.active_fx+1])
+    -- Appends real-time parameter values scaled cleanly to 0-100% string arrays
+    local p1_pct = math.floor(state.fx_p1 * 100)
+    local p2_pct = math.floor(state.fx_p2 * 100)
+    local p3_pct = math.floor(state.fx_p3 * 100)
+    screen.text(fx_names[state.active_fx+1] .. " (" .. p1_pct .. "%|" .. p2_pct .. "%|" .. p3_pct .. "%)")
   end
   
   screen.update()
