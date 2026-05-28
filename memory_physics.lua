@@ -282,8 +282,9 @@ function cleanup()
   if redraw_metro ~= nil then
     redraw_metro:stop()
     metro.free(redraw_metro.id)
-    redraw_metro = nil
-  end
+    screen.level(3)
+  screen.move(95, 64) -- Move to a safe left coordinate so the text doesn't overflow off-screen
+  screen.text(params:get("sync_mode") == 1 and "FREE" or string.format("%.0f BPM", clock.get_tempo()))
 end
 
 function redraw()
