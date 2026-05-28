@@ -3,6 +3,7 @@ Engine_MemoryPhysics : CroneEngine {
 	var <buffers, <synths, <recSynth, <maxLayers = 6;
 	var <recBuffer, <tempBuffer, <volBus, <tempoBus;
 	var <fxBus, <eqBus, <fxSynth, <eqSynth;
+	var <oscFuncs; // Array to hold the OSC bridge functions
 
 	*new { arg context, doneCallback;
 		^super.new(context, doneCallback);
@@ -14,8 +15,6 @@ Engine_MemoryPhysics : CroneEngine {
 			Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
 		});
 		recBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
-		
-		// Dedicated temp buffer for the high-speed rhythmic shuffler
 		tempBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
 		
 		volBus = Bus.control(context.server, 1).set(1.0);
@@ -24,7 +23,15 @@ Engine_MemoryPhysics : CroneEngine {
 		fxBus = Bus.audio(context.server, 2);
 		eqBus = Bus.audio(context.server, 2);
 
-		// --- 2. SynthDefs ---
+		// --- 2. OSC Bridge (SuperCollider -> Norns Lua) ---
+		var lua = NetAddr("127.0.0.1", 10111);
+		oscFuncs = [
+			OSCFunc({ arg msg; lua.sendMsg('/layer_phase', msg[3], msg[4]); }, '/layer_phase'),
+			OSCFunc({ arg msg; lua.sendMsg('/loop_reset', msg[3]); }, '/loop_reset'),
+			OSCFunc({ arg msg; lua.sendMsg('/in_amp', msg[3]); }, '/in_amp')
+		];
+
+		// --- 3. SynthDefs ---
 		SynthDef(\StrataLayer, { arg buf, out, depth=0, duration=2.0, t_reset=0, shift_offset=0;
 			var sig, phase, frames, layer_vol, vol_target;
 			frames = duration * BufSampleRate.kr(buf);
@@ -37,11 +44,9 @@ Engine_MemoryPhysics : CroneEngine {
 			vol_target = Select.kr(depth, [1.0, 0.6, 0.3, 0.1, 0.0, 0.0]);
 			layer_vol = VarLag.kr(vol_target, 0.5, warp: \sine);
 			
-			// Fixed: Explicitly look at volBus index control vector
 			Out.ar(out, sig * layer_vol * In.kr(volBus.index, 1));
 		}).add;
 
-		// 100x Speed Destructive Offline Shuffler
 		SynthDef(\FastShuffler, { arg srcBuf, dstBuf, dur=2.0;
 			var speed = 100.0; 
 			var frames = dur * BufSampleRate.ir(srcBuf);
@@ -120,7 +125,6 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
 		}).add;
 
-		// Harmony Phase-Locked Pitch & Resonance Engine
 		SynthDef(\FX_Harmony, { arg in, out, p1=0.5, p2=0.5, p3=0.5, bpmBus;
 			var sig = In.ar(in, 2);
 			var bps = In.kr(bpmBus, 1).max(0.1);
@@ -129,7 +133,7 @@ Engine_MemoryPhysics : CroneEngine {
 			var fb = LocalIn.ar(2) + shifted;
 			var delayTime = (1.0 / bps) * Select.kr((p2 * 3).round, [0.25, 0.5, 0.75, 1.0]);
 			var resonated = DelayC.ar(fb, 2.0, delayTime);
-			var wet; // FIXED: Variable initialized here at the top phase boundary
+			var wet; 
 
 			resonated = LPF.ar(resonated, 5000 + (p2 * 5000));
 			LocalOut.ar(resonated * (0.3 + (p2 * 0.5)));
@@ -209,7 +213,7 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, wetPulse, (sp3 * 2) - 1));
 		}).add;
 
-		// --- 3. Sync and Instantiate ---
+		// --- 4. Sync and Instantiate ---
 		context.server.sync;
 		
 		Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
@@ -221,24 +225,20 @@ Engine_MemoryPhysics : CroneEngine {
 		fxSynth = Synth.new(\FX_Bypass, [\in, fxBus, \out, eqBus], context.xg, \addToTail);
 		eqSynth = Synth.new(\MasterEQ, [\in, eqBus, \out, context.out_b.index], context.xg, \addToTail);
 
-		// --- 4. Lua API Commands ---
+		// --- 5. Lua API Commands ---
 		this.addCommand(\shift_layers, "ff", { arg msg;
 			var dur = msg[1];
 			var shiftOffset = msg[2];
 			
-			// 1. Shuffle Layer 0 into the Temp Buffer BEFORE rotating
 			Synth(\FastShuffler, [\srcBuf, buffers[0], \dstBuf, tempBuffer, \dur, dur], context.xg);
 			
-			// 2. Standard layer rotation
 			buffers = buffers.rotate(1);
 			synths = synths.rotate(1);
 			synths.do { arg syn, i; syn.set(\depth, i); };
 			
-			// 3. Record fresh data to the new buffers[0]
 			recBuffer.copyData(buffers[0]);
 			synths[0].set(\duration, dur, \t_reset, 1, \shift_offset, shiftOffset);
 			
-			// 4. Overwrite buffers[1] with the shuffled data after 100x speed execution
 			SystemClock.sched(0.1, {
 				tempBuffer.copyData(buffers[1]);
 				nil;
@@ -285,5 +285,6 @@ Engine_MemoryPhysics : CroneEngine {
 		tempoBus.free;
 		fxSynth.free;
 		eqSynth.free;
+		oscFuncs.do(_.free); // Clean up the OSC bridge on exit
 	}
 }
