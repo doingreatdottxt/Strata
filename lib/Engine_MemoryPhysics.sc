@@ -36,17 +36,17 @@ Engine_MemoryPhysics : CroneEngine {
 			
 			vol_target = Select.kr(depth, [1.0, 0.6, 0.3, 0.1, 0.0, 0.0]);
 			layer_vol = VarLag.kr(vol_target, 0.5, warp: \sine);
-			Out.ar(out, sig * layer_vol * In.kr(out, 1)); // note: out is expected to be a bus index
+			Out.ar(out, sig * layer_vol * In.kr(out, 1));
 		}).add;
 
 		// NEW: 100x Speed Offline Shuffler
 		// Renders a sliced version of a buffer instantly into a destination buffer
 		SynthDef(\FastShuffler, { arg srcBuf, dstBuf, dur=2.0;
-			var speed = 100.0; // Render at 100x speed to prevent audio dropouts
+			var speed = 100.0;
 			var frames = dur * BufSampleRate.ir(srcBuf);
 			var writePhase = Line.ar(0, frames, dur / speed, doneAction: 2);
 			
-			var sliceCount = 8; // Chops the layer into 8 rhythmic pieces
+			var sliceCount = 8;
 			var sliceFrames = frames / sliceCount;
 			
 			var trig = Impulse.ar((BufSampleRate.ir(srcBuf) / sliceFrames) * speed);
@@ -93,15 +93,15 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp3 = Lag.kr(p3, 0.05);
 			var shimmerLoop = LocalIn.ar(1) + monoDry;
 			var wetAbyss;
-
+			
 			shimmerLoop = PitchShift.ar(shimmerLoop, 0.1, 2.0, 0.001, 0.001);
 			shimmerLoop = LPF.ar(shimmerLoop, 8000);
 			shimmerLoop = LeakDC.ar(shimmerLoop);
 			shimmerLoop = shimmerLoop.tanh;
 			LocalOut.ar(shimmerLoop * (sp2 * 0.85));
-
+			
 			wetAbyss = (monoDry + (shimmerLoop * sp2)) * 0.4;
-
+			
 			8.do {
 				var badFirewall;
 				wetAbyss = AllpassC.ar(
@@ -112,12 +112,13 @@ Engine_MemoryPhysics : CroneEngine {
 				badFirewall = CheckBadValues.ar(wetAbyss, id: 0, post: 0);
 				wetAbyss = Select.ar(badFirewall.min(1), [wetAbyss, DC.ar(0.0)]);
 			};
-
+			
 			wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
 			wetAbyss = wetAbyss.tanh; 
 			wetAbyss = Limiter.ar(wetAbyss * 1.4, 0.95, 0.01);
-Out.ar(out, XFade2.ar(sig, DelayC.ar(wetAbyss, 0.02, 0.015), (sp1_fast * 2) - 1));
-		
+			
+			// fixed: pass two signals to XFade2 (no array)
+			Out.ar(out, XFade2.ar(sig, DelayC.ar(wetAbyss, 0.02, 0.015), (sp1_fast * 2) - 1));
 		}).add;
 
 		// NEW: Harmony Phase-Locked Pitch & Resonance Engine
@@ -280,10 +281,8 @@ Out.ar(out, XFade2.ar(sig, DelayC.ar(wetAbyss, 0.02, 0.015), (sp1_fast * 2) - 1)
 
 		this.addCommand(\select_fx, "i", { arg msg;
 			var fx_type = msg[1];
-			// REPLACED SHATTER WITH HARMONY
 			var defs = [\FX_Bypass, \FX_Abyss, \FX_Harmony, \FX_Breeze, \FX_Crackle, \FX_Pulse];
 			fxSynth.ifNotNil({ fxSynth.free });
-			// pass bus indices and bpm bus index
 			fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus.index, \out, eqBus.index, \bpmBus, tempoBus.index]);
 		});
 
