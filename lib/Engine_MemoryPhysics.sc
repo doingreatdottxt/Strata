@@ -10,6 +10,8 @@ Engine_MemoryPhysics : CroneEngine {
 	}
 
 	alloc {
+		var lua; // <-- Declare it at the very top!
+
 		// --- 1. Allocations ---
 		buffers = Array.fill(maxLayers, {
 			Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
@@ -24,7 +26,7 @@ Engine_MemoryPhysics : CroneEngine {
 		eqBus = Bus.audio(context.server, 2);
 
 		// --- 2. OSC Bridge (SuperCollider -> Norns Lua) ---
-		var lua = NetAddr("127.0.0.1", 10111);
+		lua = NetAddr("127.0.0.1", 10111);
 		oscFuncs = [
 			OSCFunc({ arg msg; lua.sendMsg('/layer_phase', msg[3], msg[4]); }, '/layer_phase'),
 			OSCFunc({ arg msg; lua.sendMsg('/loop_reset', msg[3]); }, '/loop_reset'),
