@@ -43,7 +43,6 @@ local state = {
   last_target = 1
 }
 
--- Shatter replaced globally with HARMONY
 local fx_names = {"BYPASS", "ABYSS", "HARMONY", "BREEZE", "CRACKLE", "PULSE"}
 local layer_phases = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local redraw_metro = nil
@@ -239,7 +238,6 @@ function key(n, z)
   if n == 1 then state.shift_held = (z == 1)
   elseif n == 2 and z == 1 then
     if state.shift_held then
-        -- Modulo maps cleanly across all 6 effects (Indexes 0 to 5)
         state.active_fx = (state.active_fx + 1) % 6
         engine.select_fx(state.active_fx)
         
@@ -309,7 +307,7 @@ function redraw()
       screen.level(math.floor(math.max(4, 16 - (i * 2))))
       screen.rect(0 + (p * 94), y + 2, 2, 2); screen.fill()
     else
-      screen.level(1); screen.move(0, y + 3); screen.line(96, y + 3); screen.stroke()
+      screen.level(1); screen.move(0, y + 3); screen.line(96, y + 3); stroke()
     end
   end
   
@@ -327,16 +325,13 @@ function redraw()
   screen.move(128, 64)
   screen.text_right(params:get("sync_mode") == 1 and "FREE" or string.format("%.0f BPM", clock.get_tempo()))
   
-  -- Bottom Status HUD with percentage readouts
   if state.shift_held then
     screen.level(15)
     screen.move(0, 64)
-    -- Converts 0.0 - 2.0 EQ linear values to crisp percentages (e.g., 1.0 -> 100%)
     screen.text(string.format("EQ: H%.0f%% M%.0f%% L%.0f%%", state.eq_high * 100, state.eq_mid * 100, state.eq_low * 100))
   elseif state.active_fx > 0 then
     screen.level(15)
     screen.move(0, 64)
-    -- Appends real-time parameter values scaled cleanly to 0-100% string arrays
     local p1_pct = math.floor(state.fx_p1 * 100)
     local p2_pct = math.floor(state.fx_p2 * 100)
     local p3_pct = math.floor(state.fx_p3 * 100)
