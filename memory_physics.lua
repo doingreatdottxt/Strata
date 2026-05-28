@@ -307,7 +307,7 @@ function redraw()
       screen.level(math.floor(math.max(4, 16 - (i * 2))))
       screen.rect(0 + (p * 94), y + 2, 2, 2); screen.fill()
     else
-      screen.level(1); screen.move(0, y + 3); screen.line(96, y + 3); stroke()
+      screen.level(1); screen.move(0, y + 3); screen.line(96, y + 3); screen.stroke() -- <-- FIXED
     end
   end
   
