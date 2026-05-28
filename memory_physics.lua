@@ -27,8 +27,7 @@ local state = {
   current_amp = 0.0,
   last_activity_beat = 0,
   
-  -- Effects Engine States
-  active_fx = 0, -- 0: Bypass, 1: Abyss, 2: Harmony, 3: Breeze, 4: Crackle, 5: Pulse
+  active_fx = 0,
   fx_p1 = 0.5,
   fx_p2 = 0.5,
   fx_p3 = 0.5,
@@ -36,7 +35,6 @@ local state = {
   eq_mid = 1.0,
   eq_high = 1.0,
 
-  -- Background Rhythm Generator States
   seq = {1.0, 0.0, 0.5, 0.0, 1.0, 0.2, 0.0, 0.7, 1.0, 0.0, 0.4, 0.0, 0.8, 0.0, 0.5, 0.0},
   seq_step = 1,
   clock_active = false,
@@ -50,12 +48,10 @@ local redraw_metro = nil
 function init()
   setup_params()
   
-  -- --- Tempo Sync Integration ---
   engine.set_bpm(clock.get_tempo())
   clock.tempo_change_handler = function(bpm)
     engine.set_bpm(bpm)
   end
-  -- ------------------------------
   
   osc.event = function(path, args, from)
     if path == "/in_amp" then
@@ -124,7 +120,6 @@ function init()
         local mod_value = state.seq[state.seq_step]
         local target = params:get("seq_target")
         
-        -- Restore parameters back to baseline if target is changed or turned OFF
         if target ~= state.last_target then
            engine.set_fx_p1(state.fx_p1)
            engine.set_fx_p2(state.fx_p2)
@@ -282,9 +277,8 @@ function cleanup()
   if redraw_metro ~= nil then
     redraw_metro:stop()
     metro.free(redraw_metro.id)
-    screen.level(3)
-  screen.move(95, 64) -- Move to a safe left coordinate so the text doesn't overflow off-screen
-  screen.text(params:get("sync_mode") == 1 and "FREE" or string.format("%.0f BPM", clock.get_tempo()))
+    redraw_metro = nil
+  end
 end
 
 function redraw()
@@ -308,7 +302,7 @@ function redraw()
       screen.level(math.floor(math.max(4, 16 - (i * 2))))
       screen.rect(0 + (p * 94), y + 2, 2, 2); screen.fill()
     else
-      screen.level(1); screen.move(0, y + 3); screen.line(96, y + 3); screen.stroke() -- <-- FIXED
+      screen.level(1); screen.move(0, y + 3); screen.line(96, y + 3); screen.stroke()
     end
   end
   
