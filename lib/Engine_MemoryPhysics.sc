@@ -116,8 +116,8 @@ Engine_MemoryPhysics : CroneEngine {
 			wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
 			wetAbyss = wetAbyss.tanh; 
 			wetAbyss = Limiter.ar(wetAbyss * 1.4, 0.95, 0.01);
-
-			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
+Out.ar(out, XFade2.ar(sig, DelayC.ar(wetAbyss, 0.02, 0.015), (sp1_fast * 2) - 1));
+		
 		}).add;
 
 		// NEW: Harmony Phase-Locked Pitch & Resonance Engine
