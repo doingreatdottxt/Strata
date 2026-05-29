@@ -233,14 +233,17 @@ Engine_MemoryPhysics : CroneEngine {
 			
 			// Freeze Logic: Stutter a tiny fraction of the slice
 			var freezeFrames = sliceFrames * 0.125; 
-			var phaseMod = Select.ar(doFreeze, [sliceFrames, freezeFrames]);
+			
+			// FIX: Wrapped the control rate phase values in K2A.ar() 
+			// so Select.ar properly accepts them as audio rate streams
+			var phaseMod = Select.ar(doFreeze, [K2A.ar(sliceFrames), K2A.ar(freezeFrames)]);
 			var readPhase = Phasor.ar(trig, 1, 0, phaseMod) + readAnchor;
 			
 			var wet = BufRd.ar(2, buf, Wrap.ar(readPhase, 0, maxFrames), loop: 1, interpolation: 2);
 			
-			// De-clicking envelope
+			// De-clicking envelope (added max duration safety guard)
 			var envDur = 1.0 / trigFreq;
-			var env = EnvGen.ar(Env([0, 1, 1, 0], [0.005, envDur - 0.01, 0.005]), trig);
+			var env = EnvGen.ar(Env([0, 1, 1, 0], [0.005, (envDur - 0.01).max(0.001), 0.005]), trig);
 			wet = wet * env;
 			
 			BufWr.ar(sig, buf, writePhase);
