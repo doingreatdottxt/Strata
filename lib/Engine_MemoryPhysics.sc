@@ -1,7 +1,7 @@
 // lib/Engine_MemoryPhysics.sc
 Engine_MemoryPhysics : CroneEngine {
 	var <buffers, <synths, <recSynth, <maxLayers = 6;
-	var <recBuffer, <tempBuffer, <volBus, <tempoBus;
+	var <recBuffer, <shuffleBuffer, <volBus, <tempoBus;
 	var <fxBus, <eqBus, <fxSynth, <eqSynth;
 	var <oscFuncs; // Array to hold the OSC bridge functions
 
@@ -16,12 +16,12 @@ Engine_MemoryPhysics : CroneEngine {
 		buffers = Array.fill(maxLayers, {
 			Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
 		});
+		
 		recBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
-		tempBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
-		
+		shuffleBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
+
 		volBus = Bus.control(context.server, 1).set(1.0);
-		tempoBus = Bus.control(context.server, 1).set(2.0); 
-		
+		tempoBus = Bus.control(context.server, 1).set(2.0);
 		fxBus = Bus.audio(context.server, 2);
 		eqBus = Bus.audio(context.server, 2);
 
@@ -36,30 +36,35 @@ Engine_MemoryPhysics : CroneEngine {
 		// --- 3. SynthDefs ---
 		SynthDef(\StrataLayer, { arg buf, out, depth=0, duration=2.0, t_reset=0, shift_offset=0;
 			var sig, phase, frames, layer_vol, vol_target;
+
 			frames = duration * BufSampleRate.kr(buf);
 			phase = Wrap.ar(Phasor.ar(t_reset, BufRateScale.kr(buf), 0, frames, 0) - (shift_offset * BufSampleRate.kr(buf)), 0, frames);
 			sig = BufRd.ar(2, buf, phase, loop: 1);
-			
+
 			SendReply.kr(Impulse.kr(15), '/layer_phase', [depth, (A2K.kr(phase)/frames)], 998);
 			SendReply.kr(HPZ1.kr(A2K.kr(phase)/frames) < -0.5, '/loop_reset', [depth], 996);
-			
+
 			vol_target = Select.kr(depth, [1.0, 0.6, 0.3, 0.1, 0.0, 0.0]);
 			layer_vol = VarLag.kr(vol_target, 0.5, warp: \sine);
-			
+
 			Out.ar(out, sig * layer_vol * In.kr(volBus.index, 1));
 		}).add;
 
-		SynthDef(\FastShuffler, { arg srcBuf, dstBuf, dur=2.0;
-			var speed = 100.0; 
+		SynthDef(\BackgroundShuffler, { arg srcBuf, dstBuf, dur=2.0;
+			var speed = 2.0; // Safe background processing speed to prevent CPU spikes
 			var frames = dur * BufSampleRate.ir(srcBuf);
 			var writePhase = Line.ar(0, frames, dur / speed, doneAction: 2);
-			var sliceCount = 8; 
-			var sliceFrames = frames / sliceCount;
 			
+			var sliceCount = 8;
+			var sliceFrames = frames / sliceCount;
 			var trig = Impulse.ar((BufSampleRate.ir(srcBuf) / sliceFrames) * speed);
 			var sliceIdx = TRand.ar(0, sliceCount, trig).floor;
 			
-			var readPhase = Phasor.ar(trig, speed, 0, sliceFrames) + (sliceIdx * sliceFrames);
+			// Randomly apply Shuffle and Freeze effects (25% chance to freeze slice)
+			var freeze = TRand.ar(0.0, 1.0, trig) < 0.25;
+			var readRate = Select.kr(freeze, [speed, 0.0]);
+			
+			var readPhase = Phasor.ar(trig, readRate, 0, sliceFrames) + (sliceIdx * sliceFrames);
 			var sig = BufRd.ar(2, srcBuf, Wrap.ar(readPhase, 0, frames), loop: 1);
 			
 			BufWr.ar(sig, dstBuf, writePhase, loop: 0);
@@ -79,11 +84,11 @@ Engine_MemoryPhysics : CroneEngine {
 			var lowDb = lowGain.max(0.01).ampdb;
 			var midDb = midGain.max(0.01).ampdb;
 			var highDb = highGain.max(0.01).ampdb;
-			
+
 			sig = BLowShelf.ar(sig, freq: 300, rs: 1.0, db: lowDb);
 			sig = BPeakEQ.ar(sig, freq: 1200, rq: 1.2, db: midDb);
 			sig = BHiShelf.ar(sig, freq: 3500, rs: 1.0, db: highDb);
-			
+
 			Out.ar(out, sig * amp);
 		}).add;
 
@@ -93,11 +98,12 @@ Engine_MemoryPhysics : CroneEngine {
 
 		SynthDef(\FX_Abyss, { arg in, out, p1=0.5, p2=0.5, p3=0.5, bpmBus;
 			var sig = In.ar(in, 2);
-			var monoDry = (sig.sum * 0.5) + WhiteNoise.ar(1e-8); 
-			var sp1_fast = Lag.kr(p1, 0.05); 
-			var sp1_slow = Lag.kr(p1, 0.8);  
+			var monoDry = (sig.sum * 0.5) + WhiteNoise.ar(1e-8);
+			var sp1_fast = Lag.kr(p1, 0.05);
+			var sp1_slow = Lag.kr(p1, 0.8);
 			var sp2 = Lag.kr(p2, 0.05);
 			var sp3 = Lag.kr(p3, 0.05);
+
 			var shimmerLoop = LocalIn.ar(1) + monoDry;
 			var wetAbyss;
 
@@ -105,6 +111,7 @@ Engine_MemoryPhysics : CroneEngine {
 			shimmerLoop = LPF.ar(shimmerLoop, 8000);
 			shimmerLoop = LeakDC.ar(shimmerLoop);
 			shimmerLoop = shimmerLoop.tanh;
+
 			LocalOut.ar(shimmerLoop * (sp2 * 0.85));
 
 			wetAbyss = (monoDry + (shimmerLoop * sp2)) * 0.4;
@@ -112,8 +119,8 @@ Engine_MemoryPhysics : CroneEngine {
 			8.do {
 				var badFirewall;
 				wetAbyss = AllpassC.ar(
-					wetAbyss, 0.1, 
-					LFNoise2.kr(0.1 + (sp3 * 0.5)).range(0.01, 0.05 + (sp3 * 0.04)), 
+					wetAbyss, 0.1,
+					LFNoise2.kr(0.1 + (sp3 * 0.5)).range(0.01, 0.05 + (sp3 * 0.04)),
 					1.0 + (sp1_slow * 5.0)
 				);
 				badFirewall = CheckBadValues.ar(wetAbyss, id: 0, post: 0);
@@ -121,7 +128,7 @@ Engine_MemoryPhysics : CroneEngine {
 			};
 
 			wetAbyss = LPF.ar(wetAbyss, 12000 - (sp1_fast * 8000));
-			wetAbyss = wetAbyss.tanh; 
+			wetAbyss = wetAbyss.tanh;
 			wetAbyss = Limiter.ar(wetAbyss * 1.4, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, [wetAbyss, DelayC.ar(wetAbyss, 0.02, 0.015)], (sp1_fast * 2) - 1));
@@ -130,16 +137,18 @@ Engine_MemoryPhysics : CroneEngine {
 		SynthDef(\FX_Harmony, { arg in, out, p1=0.5, p2=0.5, p3=0.5, bpmBus;
 			var sig = In.ar(in, 2);
 			var bps = In.kr(bpmBus, 1).max(0.1);
+
 			var intervals = Select.kr((p1 * 4).round, [1.0, 1.1892, 1.3348, 1.4983, 2.0]);
 			var shifted = PitchShift.ar(sig, 0.15, intervals, 0.0, 0.004);
+
 			var fb = LocalIn.ar(2) + shifted;
 			var delayTime = (1.0 / bps) * Select.kr((p2 * 3).round, [0.25, 0.5, 0.75, 1.0]);
 			var resonated = DelayC.ar(fb, 2.0, delayTime);
-			var wet; 
+			var wet;
 
 			resonated = LPF.ar(resonated, 5000 + (p2 * 5000));
 			LocalOut.ar(resonated * (0.3 + (p2 * 0.5)));
-			
+
 			wet = Limiter.ar(resonated * 1.5, 0.95, 0.01);
 			Out.ar(out, XFade2.ar(sig, wet, (p3 * 2) - 1));
 		}).add;
@@ -149,11 +158,13 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp1 = Lag.kr(p1, 0.05);
 			var sp2 = Lag.kr(p2, 0.05);
 			var sp3 = Lag.kr(p3, 0.05);
+
 			var monoDry = sig.sum * 0.5;
 			var chorused = DelayC.ar(monoDry, 0.2, SinOsc.kr(0.5 + (sp1 * 2.0)).range(0.005, 0.01 + (sp1 * 0.02)));
+
 			var wetBreeze = FreeVerb.ar(HPF.ar(chorused, 800 + (sp1 * 400)), 1.0, 0.7 + (sp2 * 0.29), 0.1);
-			
 			wetBreeze = Pan2.ar(wetBreeze, SinOsc.kr(0.1 + (sp1 * 0.2)));
+
 			wetBreeze = Limiter.ar(wetBreeze * 5.0, 0.95, 0.01);
 
 			Out.ar(out, XFade2.ar(sig, wetBreeze, (sp3 * 2) - 1));
@@ -163,30 +174,32 @@ Engine_MemoryPhysics : CroneEngine {
 			var sig = In.ar(in, 2);
 			var bps = In.kr(bpmBus, 1).max(0.1);
 			var beatSec = 1.0 / bps;
-			
-			var maxFrames = SampleRate.ir * 4.0; 
+
+			var maxFrames = SampleRate.ir * 4.0;
 			var buf = LocalBuf(maxFrames, 2).clear;
 			var writePhase = Phasor.ar(0, 1, 0, maxFrames);
-			
+
 			var trig = TDuty.ar(Drand([0.0625, 0.125, 0.1875, 0.25], inf) * beatSec);
 			var offsetBeats = Demand.ar(trig, 0, Drand([0, 0.125, 0.25, 0.5, 0.75, 1.0], inf));
 			var frameOffset = offsetBeats * beatSec * SampleRate.ir;
-			
+
 			var rates = Drand([1.0, 1.0, 2.0, -1.0, -2.0, 4.0], inf);
 			var rate = Demand.ar(trig, 0, rates);
-			
+
 			var shiftProb = TRand.ar(0.0, 1.0, trig) < p1;
 			var rateMod = Select.ar(shiftProb, [DC.ar(1.0), rate]);
-			
+
 			var readAnchor = Wrap.ar(writePhase - frameOffset, 0, maxFrames);
 			var readPhase = Phasor.ar(trig, rateMod, 0, maxFrames, readAnchor);
+
 			var wet = BufRd.ar(2, buf, readPhase, loop: 1, interpolation: 2);
-			
 			var decayTime = beatSec * 0.25 * p2.linlin(0, 1, 0.05, 1.0);
 			var grainEnv = EnvGen.ar(Env([1, 1, 0], [decayTime * 0.8, decayTime * 0.2]), trig);
-			
+
 			wet = wet * grainEnv;
+
 			BufWr.ar(sig, buf, writePhase);
+
 			Out.ar(out, XFade2.ar(sig, wet, (p3 * 2) - 1));
 		}).add;
 
@@ -195,19 +208,22 @@ Engine_MemoryPhysics : CroneEngine {
 			var sp1 = Lag.kr(p1, 0.05);
 			var sp2 = Lag.kr(p2, 0.05);
 			var sp3 = Lag.kr(p3, 0.05);
-			var bps = In.kr(bpmBus, 1).max(0.1); 
+
+			var bps = In.kr(bpmBus, 1).max(0.1);
 			var multIdx = (sp1 * 5).round;
 			var mult = Select.kr(multIdx, [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]);
 			var freq = bps * mult;
 			var cycle = 1.0 / freq;
-			var trg = Impulse.ar(freq);
 
+			var trg = Impulse.ar(freq);
 			var smoothEnv = EnvGen.ar(Env([1, 0, 1], [0.5, 0.5], [\sin, \sin]), trg, timeScale: cycle);
 			var pumpEnv = EnvGen.ar(Env([1, 0, 1], [0.02, 0.98], [\lin, 4]), trg, timeScale: cycle);
+
 			var duckCurve = SelectX.ar(sp2, [smoothEnv, pumpEnv]);
 
-			var depth = 0.6 + (sp2 * 0.4); 
+			var depth = 0.6 + (sp2 * 0.4);
 			var duckedSig = sig * (1.0 - (depth * (1.0 - duckCurve)));
+
 			var sweepFilter = LPF.ar(duckedSig, 800 + (duckCurve * 14000));
 			var wetPulse = SelectX.ar(sp2, [duckedSig, sweepFilter]);
 			wetPulse = Limiter.ar(wetPulse * 1.6, 0.95, 0.01);
@@ -217,13 +233,13 @@ Engine_MemoryPhysics : CroneEngine {
 
 		// --- 4. Sync and Instantiate ---
 		context.server.sync;
-		
+
 		Synth(\InputTracker, [\in, context.in_b[0].index], context.xg);
-		
+
 		synths = Array.fill(maxLayers, { arg i;
 			Synth(\StrataLayer, [\buf, buffers[i], \out, fxBus, \depth, i], context.xg);
 		});
-		
+
 		fxSynth = Synth.new(\FX_Bypass, [\in, fxBus, \out, eqBus], context.xg, \addToTail);
 		eqSynth = Synth.new(\MasterEQ, [\in, eqBus, \out, context.out_b.index], context.xg, \addToTail);
 
@@ -231,40 +247,59 @@ Engine_MemoryPhysics : CroneEngine {
 		this.addCommand(\shift_layers, "ff", { arg msg;
 			var dur = msg[1];
 			var shiftOffset = msg[2];
-			
-			Synth(\FastShuffler, [\srcBuf, buffers[0], \dstBuf, tempBuffer, \dur, dur], context.xg);
-			
+
+			// Standard rotation without blocking or spiking CPU
 			buffers = buffers.rotate(1);
 			synths = synths.rotate(1);
 			synths.do { arg syn, i; syn.set(\depth, i); };
-			
+
 			recBuffer.copyData(buffers[0]);
 			synths[0].set(\duration, dur, \t_reset, 1, \shift_offset, shiftOffset);
-			
-			SystemClock.sched(0.1, {
-				tempBuffer.copyData(buffers[1]);
-				nil;
-			});
+
+			// Start the background process to shuffle Layer 0 into the secondary buffer
+			Synth(\BackgroundShuffler, [\srcBuf, buffers[0], \dstBuf, shuffleBuffer, \dur, dur], context.xg);
 		});
 
 		this.addCommand(\erode_layer, "", {
 			buffers = buffers.rotate(-1);
 			synths = synths.rotate(-1);
 			synths.do { arg syn, i; syn.set(\depth, i); };
-			SystemClock.sched(0.6, { buffers[buffers.size-1].zero; nil; });
+			
+			SystemClock.sched(0.6, {
+				buffers[buffers.size-1].zero;
+				nil;
+			});
 		});
 
-		this.addCommand(\clear_layers, "", { buffers.do(_.zero); tempBuffer.zero; });
-		this.addCommand(\set_volume, "f", { arg msg; volBus.set(msg[1]); });
-		this.addCommand(\set_bpm, "f", { arg msg; tempoBus.set(msg[1] / 60.0); });
+		this.addCommand(\clear_layers, "", {
+			buffers.do(_.zero);
+			shuffleBuffer.zero;
+		});
+
+		this.addCommand(\set_volume, "f", { arg msg;
+			volBus.set(msg[1]);
+		});
+
+		this.addCommand(\set_bpm, "f", { arg msg;
+			tempoBus.set(msg[1] / 60.0);
+		});
 
 		this.addCommand(\record_start, "", {
 			recBuffer.zero;
 			recSynth = Synth(\SurfaceRecorder, [\buf, recBuffer, \in, context.in_b[0].index], context.xg);
+			
+			// Inject the secondary background buffer into the 2nd layer
+			shuffleBuffer.copyData(buffers[1]);
 		});
 
-		this.addCommand(\record_stop, "", { recSynth.free; });
-		this.addCommand(\main_vol, "f", { arg msg; eqSynth.set(\amp, msg[1]); });
+		this.addCommand(\record_stop, "", {
+			recSynth.free;
+		});
+
+		this.addCommand(\main_vol, "f", { arg msg;
+			eqSynth.set(\amp, msg[1]);
+		});
+		
 		this.addCommand(\set_eq_low, "f", { arg msg; eqSynth.set(\lowGain, msg[1]); });
 		this.addCommand(\set_eq_mid, "f", { arg msg; eqSynth.set(\midGain, msg[1]); });
 		this.addCommand(\set_eq_high, "f", { arg msg; eqSynth.set(\highGain, msg[1]); });
@@ -272,6 +307,7 @@ Engine_MemoryPhysics : CroneEngine {
 		this.addCommand(\select_fx, "i", { arg msg;
 			var fx_type = msg[1];
 			var defs = [\FX_Bypass, \FX_Abyss, \FX_Harmony, \FX_Breeze, \FX_Crackle, \FX_Pulse];
+
 			fxSynth.free;
 			fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus, \out, eqBus, \bpmBus, tempoBus.index]);
 		});
