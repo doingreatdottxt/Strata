@@ -43,7 +43,7 @@ local state = {
   last_target = 1
 }
 
-local fx_names = {"BYPASS", "ABYSS", "HARMONY", "BREEZE", "CRACKLE", "PULSE"}
+local fx_names = {"BYPASS", "ABYSS", "HARMONY", "BREEZE", "CRACKLE", "PULSE", "SHUFFLE"}
 local layer_phases = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local redraw_metro = nil
 
@@ -240,7 +240,7 @@ function key(n, z)
   elseif n == 2 and z == 1 then
     if state.shift_held then
         -- Updated modulo to 6 to include the new Pulse effect
-        state.active_fx = (state.active_fx + 1) % 6
+        state.active_fx = (state.active_fx + 1) % 7
         engine.select_fx(state.active_fx)
         
         clock.run(function()
