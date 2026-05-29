@@ -43,7 +43,7 @@ local state = {
   last_target = 1
 }
 
-local fx_names = {"BYPASS", "ABYSS", "SHATTER", "BREEZE", "CRACKLE", "PULSE"}
+local fx_names = {"BYPASS", "ABYSS", "HARMONY", "BREEZE", "CRACKLE", "PULSE"}
 local layer_phases = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local redraw_metro = nil
 
