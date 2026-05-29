@@ -1,16 +1,16 @@
 // lib/Engine_MemoryPhysics.sc
 Engine_MemoryPhysics : CroneEngine {
 	var <buffers, <synths, <recSynth, <maxLayers = 6;
-	var <recBuffer, <shuffleBuffer, <volBus, <tempoBus;
+	var <recBuffer, <volBus, <tempoBus;
 	var <fxBus, <eqBus, <fxSynth, <eqSynth;
-	var <oscFuncs; // Array to hold the OSC bridge functions
+	var <oscFuncs;
 
 	*new { arg context, doneCallback;
 		^super.new(context, doneCallback);
 	}
 
 	alloc {
-		var lua; // <-- Declare it at the very top!
+		var lua;
 
 		// --- 1. Allocations ---
 		buffers = Array.fill(maxLayers, {
@@ -18,7 +18,6 @@ Engine_MemoryPhysics : CroneEngine {
 		});
 		
 		recBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
-		shuffleBuffer = Buffer.alloc(context.server, (context.server.sampleRate * 30.0).asInteger, 2);
 
 		volBus = Bus.control(context.server, 1).set(1.0);
 		tempoBus = Bus.control(context.server, 1).set(2.0);
@@ -48,26 +47,6 @@ Engine_MemoryPhysics : CroneEngine {
 			layer_vol = VarLag.kr(vol_target, 0.5, warp: \sine);
 
 			Out.ar(out, sig * layer_vol * In.kr(volBus.index, 1));
-		}).add;
-
-		SynthDef(\BackgroundShuffler, { arg srcBuf, dstBuf, dur=2.0;
-			var speed = 2.0; // Safe background processing speed to prevent CPU spikes
-			var frames = dur * BufSampleRate.ir(srcBuf);
-			var writePhase = Line.ar(0, frames, dur / speed, doneAction: 2);
-			
-			var sliceCount = 8;
-			var sliceFrames = frames / sliceCount;
-			var trig = Impulse.ar((BufSampleRate.ir(srcBuf) / sliceFrames) * speed);
-			var sliceIdx = TRand.ar(0, sliceCount, trig).floor;
-			
-			// Randomly apply Shuffle and Freeze effects (25% chance to freeze slice)
-			var freeze = TRand.ar(0.0, 1.0, trig) < 0.25;
-			var readRate = Select.kr(freeze, [speed, 0.0]);
-			
-			var readPhase = Phasor.ar(trig, readRate, 0, sliceFrames) + (sliceIdx * sliceFrames);
-			var sig = BufRd.ar(2, srcBuf, Wrap.ar(readPhase, 0, frames), loop: 1);
-			
-			BufWr.ar(sig, dstBuf, writePhase, loop: 0);
 		}).add;
 
 		SynthDef(\InputTracker, { arg in;
@@ -231,6 +210,43 @@ Engine_MemoryPhysics : CroneEngine {
 			Out.ar(out, XFade2.ar(sig, wetPulse, (sp3 * 2) - 1));
 		}).add;
 
+		SynthDef(\FX_Shuffle, { arg in, out, p1=0.5, p2=0.5, p3=0.5, bpmBus;
+			var sig = In.ar(in, 2);
+			var bps = In.kr(bpmBus, 1).max(0.1);
+			var trigFreq = bps * 2.0; // 8th note rhythmic slices
+			var sliceFrames = SampleRate.ir / trigFreq;
+			var maxFrames = SampleRate.ir * 4.0;
+			var buf = LocalBuf(maxFrames, 2).clear;
+			
+			var writePhase = Phasor.ar(0, 1, 0, maxFrames);
+			var trig = Impulse.ar(trigFreq);
+			
+			// Probabilities linked to user parameters
+			var doShuffle = TRand.ar(0.0, 1.0, trig) < p1;
+			var doFreeze = TRand.ar(0.0, 1.0, trig) < p2;
+			
+			// Shuffle Logic: Jump back 0 to 7 slices randomly
+			var randOffset = TRand.ar(0, 7, trig).floor * sliceFrames;
+			var safeWritePhase = Wrap.ar(writePhase - (SampleRate.ir * 0.05), 0, maxFrames); 
+			var anchor = Latch.ar(safeWritePhase, trig);
+			var readAnchor = Select.ar(doShuffle, [anchor, Wrap.ar(anchor - randOffset, 0, maxFrames)]);
+			
+			// Freeze Logic: Stutter a tiny fraction of the slice
+			var freezeFrames = sliceFrames * 0.125; 
+			var phaseMod = Select.ar(doFreeze, [sliceFrames, freezeFrames]);
+			var readPhase = Phasor.ar(trig, 1, 0, phaseMod) + readAnchor;
+			
+			var wet = BufRd.ar(2, buf, Wrap.ar(readPhase, 0, maxFrames), loop: 1, interpolation: 2);
+			
+			// De-clicking envelope
+			var envDur = 1.0 / trigFreq;
+			var env = EnvGen.ar(Env([0, 1, 1, 0], [0.005, envDur - 0.01, 0.005]), trig);
+			wet = wet * env;
+			
+			BufWr.ar(sig, buf, writePhase);
+			Out.ar(out, XFade2.ar(sig, wet, (p3 * 2) - 1));
+		}).add;
+
 		// --- 4. Sync and Instantiate ---
 		context.server.sync;
 
@@ -248,16 +264,12 @@ Engine_MemoryPhysics : CroneEngine {
 			var dur = msg[1];
 			var shiftOffset = msg[2];
 
-			// Standard rotation without blocking or spiking CPU
 			buffers = buffers.rotate(1);
 			synths = synths.rotate(1);
 			synths.do { arg syn, i; syn.set(\depth, i); };
 
 			recBuffer.copyData(buffers[0]);
 			synths[0].set(\duration, dur, \t_reset, 1, \shift_offset, shiftOffset);
-
-			// Start the background process to shuffle Layer 0 into the secondary buffer
-			Synth(\BackgroundShuffler, [\srcBuf, buffers[0], \dstBuf, shuffleBuffer, \dur, dur], context.xg);
 		});
 
 		this.addCommand(\erode_layer, "", {
@@ -273,7 +285,6 @@ Engine_MemoryPhysics : CroneEngine {
 
 		this.addCommand(\clear_layers, "", {
 			buffers.do(_.zero);
-			shuffleBuffer.zero;
 		});
 
 		this.addCommand(\set_volume, "f", { arg msg;
@@ -287,9 +298,6 @@ Engine_MemoryPhysics : CroneEngine {
 		this.addCommand(\record_start, "", {
 			recBuffer.zero;
 			recSynth = Synth(\SurfaceRecorder, [\buf, recBuffer, \in, context.in_b[0].index], context.xg);
-			
-			// Inject the secondary background buffer into the 2nd layer
-			shuffleBuffer.copyData(buffers[1]);
 		});
 
 		this.addCommand(\record_stop, "", {
@@ -306,9 +314,10 @@ Engine_MemoryPhysics : CroneEngine {
 
 		this.addCommand(\select_fx, "i", { arg msg;
 			var fx_type = msg[1];
-			var defs = [\FX_Bypass, \FX_Abyss, \FX_Harmony, \FX_Breeze, \FX_Crackle, \FX_Pulse];
-
+			var defs = [\FX_Bypass, \FX_Abyss, \FX_Harmony, \FX_Breeze, \FX_Crackle, \FX_Pulse, \FX_Shuffle];
+			
 			fxSynth.free;
+			fx_type = fx_type.clip(0, defs.size - 1); // Clip ensures safety if Lua sends out-of-bounds index
 			fxSynth = Synth.before(eqSynth, defs[fx_type], [\in, fxBus, \out, eqBus, \bpmBus, tempoBus.index]);
 		});
 
@@ -323,6 +332,6 @@ Engine_MemoryPhysics : CroneEngine {
 		tempoBus.free;
 		fxSynth.free;
 		eqSynth.free;
-		oscFuncs.do(_.free); // Clean up the OSC bridge on exit
+		oscFuncs.do(_.free);
 	}
 }
